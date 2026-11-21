@@ -79,13 +79,13 @@ function coerceEffectValue(p, v) {
 function scanEffects(dirs) {
   const out = [];
   const seen = new Set();
-  const walk = (d, source, depth) => {
+  const walk = (d, source, depth, maxDepth) => {
     let entries;
     try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       const p = path.join(d, e.name);
       if (e.isDirectory()) {
-        if (depth < 3) walk(p, source, depth + 1);
+        if (depth < maxDepth && !/^(node_modules|Plugins|cache|Cache|GPUCache|logs?)$/.test(e.name)) walk(p, source, depth + 1, maxDepth);
       } else if (/\.html?$/i.test(e.name)) {
         try {
           const html = fs.readFileSync(p, 'utf8');
@@ -99,7 +99,7 @@ function scanEffects(dirs) {
       }
     }
   };
-  for (const { dir, source } of dirs) walk(dir, source, 0);
+  for (const { dir, source, depth } of dirs) walk(dir, source, 0, depth || 3);
   out.sort((a, b) => a.title.localeCompare(b.title));
   return out;
 }

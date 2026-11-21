@@ -63,14 +63,13 @@ function signalRgbEffectDirs() {
   const docs = app.getPath('documents');
   const home = os.homedir();
   const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-  const dirs = [path.join(docs, 'WhirlwindFX', 'Effects'), path.join(home, 'OneDrive', 'Documents', 'WhirlwindFX', 'Effects'),
-    path.join(process.env.APPDATA || '', 'WhirlwindFX', 'Effects'), path.join(local, 'WhirlwindFX', 'Effects')];
-  try {
-    const vortx = path.join(local, 'VortxEngine');
-    const apps = fs.readdirSync(vortx).filter((d) => /^app-/.test(d)).sort();
-    if (apps.length) dirs.push(path.join(vortx, apps[apps.length - 1], 'Signal-x64', 'Effects'));
-  } catch { /* not installed */ }
-  return dirs.filter((d) => d && fs.existsSync(d));
+  const roaming = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  // Search every place SignalRGB keeps content, deeply: effects downloaded from its
+  // library live somewhere under these roots.
+  const roots = [path.join(docs, 'WhirlwindFX'), path.join(home, 'OneDrive', 'Documents', 'WhirlwindFX'),
+    path.join(local, 'WhirlwindFX'), path.join(roaming, 'WhirlwindFX'), path.join(local, 'VortxEngine'),
+    path.join(roaming, 'VortxEngine'), path.join(local, 'SignalRgb'), path.join(roaming, 'SignalRgb')];
+  return roots.filter((d) => fs.existsSync(d));
 }
 
 function pluginDirs() {
@@ -85,7 +84,7 @@ function pluginDirs() {
 
 function effectDirs() {
   const dirs = [{ dir: BUILTIN_EFFECTS, source: 'builtin' }];
-  for (const d of signalRgbEffectDirs()) dirs.push({ dir: d, source: 'signalrgb' });
+  for (const d of signalRgbEffectDirs()) dirs.push({ dir: d, source: 'signalrgb', depth: 8 });
   dirs.push({ dir: path.join(userDir(), 'effects'), source: 'user' });
   for (const d of settings.get('effectDirs') || []) dirs.push({ dir: d, source: 'user' });
   return dirs;
