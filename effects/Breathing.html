@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<title>Breathing</title>
+<meta description="Slowly fades a colour in and out."/>
+<meta publisher="Cuttlefish"/>
+<meta property="color" label="Color" type="color" default="#8b5cf6" min="0" max="360"/>
+<meta property="speed" label="Speed" type="number" min="1" max="100" default="30"/>
+<meta property="minimum" label="Minimum brightness" type="number" min="0" max="100" default="5"/>
+<meta property="cycle" label="Cycle colours" type="boolean" default="0"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+let t = 0;
+function frame() {
+  t += speed / 2000;
+  const v = minimum / 100 + (1 - minimum / 100) * (0.5 - 0.5 * Math.cos(t * Math.PI * 2));
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = v;
+  ctx.fillStyle = cycle ? `hsl(${(t * 60) % 360},100%,50%)` : color;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

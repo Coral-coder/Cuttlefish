@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<title>Fireflies</title>
+<meta description="Soft drifting points of light."/>
+<meta publisher="Cuttlefish"/>
+<meta property="count" label="Count" type="number" min="1" max="120" default="40"/>
+<meta property="color" label="Color" type="color" default="#c8ff3a" min="0" max="360"/>
+<meta property="rainbow" label="Rainbow" type="boolean" default="0"/>
+<meta property="speed" label="Speed" type="number" min="1" max="100" default="30"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+const flies = [];
+function frame() {
+  while (flies.length < count) flies.push({ x: Math.random() * W, y: Math.random() * H, a: Math.random() * 6.28, p: Math.random() * 6.28, h: Math.random() * 360 });
+  flies.length = Math.round(count);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0, 0, W, H);
+  for (const f of flies) {
+    f.a += (Math.random() - 0.5) * 0.3; f.p += speed / 600;
+    f.x = (f.x + Math.cos(f.a) * speed / 40 + W) % W; f.y = (f.y + Math.sin(f.a) * speed / 40 + H) % H;
+    const b = 0.5 + 0.5 * Math.sin(f.p * 3);
+    const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 18);
+    g.addColorStop(0, rainbow ? `hsla(${f.h},100%,60%,${b})` : color); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = b; ctx.fillStyle = g; ctx.fillRect(f.x - 18, f.y - 18, 36, 36); ctx.globalAlpha = 1;
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<title>Color Spiral</title>
+<meta description="A rotating colour wheel spiralling out from the centre."/>
+<meta publisher="Cuttlefish"/>
+<meta property="speed" label="Speed" type="number" min="1" max="100" default="25"/>
+<meta property="twist" label="Twist" type="number" min="0" max="100" default="30"/>
+<meta property="cx" label="Centre X" type="number" min="0" max="320" default="160"/>
+<meta property="cy" label="Centre Y" type="number" min="0" max="200" default="100"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+let t = 0;
+function frame() {
+  t += speed / 30;
+  const img = ctx.createImageData(W, H), d = img.data;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const a = Math.atan2(y - cy, x - cx) * 180 / Math.PI;
+    const r = Math.hypot(x - cx, y - cy);
+    const h = ((a + r * twist / 20 + t) % 360 + 360) % 360;
+    const i = (y * W + x) * 4;
+    const k = (n) => (n + h / 30) % 12;
+    const f = (n) => 0.5 - 0.5 * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+    d[i] = f(0) * 255; d[i + 1] = f(8) * 255; d[i + 2] = f(4) * 255; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

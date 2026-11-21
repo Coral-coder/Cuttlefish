@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+<title>Solid Color</title>
+<meta description="One static colour everywhere."/>
+<meta publisher="Cuttlefish"/>
+<meta property="color" label="Color" type="color" default="#3ad1c3" min="0" max="360"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+function frame() { ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); requestAnimationFrame(frame); }
+frame();
+</script>
+</body>
+</html>

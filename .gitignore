@@ -1,0 +1,5 @@
+node_modules/
+dist/
+resources/pawnio/*.bin
+*.log
+.DS_Store

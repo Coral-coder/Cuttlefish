@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<title>Audio Spectrum</title>
+<meta description="Equaliser bars that dance to whatever your PC is playing."/>
+<meta publisher="Cuttlefish"/>
+<meta property="bars" label="Bars" type="number" min="8" max="100" default="32"/>
+<meta property="gain" label="Sensitivity" type="number" min="1" max="100" default="50"/>
+<meta property="hueStart" label="Low colour" type="hue" min="0" max="360" default="170"/>
+<meta property="hueEnd" label="High colour" type="hue" min="0" max="360" default="280"/>
+<meta property="mirror" label="Mirror from centre" type="boolean" default="1"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+const peaks = [];
+function frame() {
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, W, H);
+  const f = Array.from(engine.audio.freq || []);
+  const n = Math.max(1, Math.round(bars));
+  const per = Math.max(1, Math.floor(f.length / n));
+  const bw = W / n;
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    for (let k = 0; k < per; k++) v = Math.max(v, Math.abs(f[i * per + k] || 0));
+    v = Math.min(1, (v / 127) * (gain / 40) * (1 + i / n));
+    peaks[i] = Math.max(v, (peaks[i] || 0) - 0.02);
+    const h = v * H;
+    const hue = hueStart + (hueEnd - hueStart) * (i / n);
+    ctx.fillStyle = `hsl(${hue},100%,50%)`;
+    if (mirror) ctx.fillRect(i * bw, (H - h) / 2, bw - 1, h); else ctx.fillRect(i * bw, H - h, bw - 1, h);
+    ctx.fillStyle = '#fff';
+    const py = mirror ? (H - peaks[i] * H) / 2 : H - peaks[i] * H;
+    ctx.fillRect(i * bw, py, bw - 1, 2);
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

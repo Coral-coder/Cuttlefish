@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Cuttlefish</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <nav id="sidebar">
+    <div class="brand"><span class="mark">◐</span><span>Cuttlefish</span></div>
+    <button class="nav active" data-page="lighting"><span class="ico">✦</span>Lighting</button>
+    <button class="nav" data-page="layout"><span class="ico">▦</span>Layout</button>
+    <button class="nav" data-page="devices"><span class="ico">⌁</span>Devices<span class="badge" id="devCount">0</span></button>
+    <button class="nav" data-page="mapping"><span class="ico">◎</span>Phone mapping</button>
+    <button class="nav" data-page="settings"><span class="ico">⚙</span>Settings</button>
+    <button class="nav" data-page="diagnostics"><span class="ico">≣</span>Diagnostics</button>
+    <div class="grow"></div>
+    <div class="power">
+      <label class="switch" title="Lighting on/off"><input type="checkbox" id="power" checked><span></span></label>
+      <input type="range" id="brightness" min="0" max="100" value="100" title="Global brightness">
+      <span id="brightnessOut">100%</span>
+    </div>
+    <div class="version" id="version"></div>
+  </nav>
+
+  <main>
+    <div id="banner" class="banner" hidden></div>
+
+    <!-- LIGHTING -->
+    <section class="page active" id="page-lighting">
+      <div class="col library">
+        <div class="lib-head">
+          <input id="search" type="search" placeholder="Search effects…">
+          <div class="chips" id="sourceChips">
+            <button class="chip active" data-src="all">All</button>
+            <button class="chip" data-src="fav">★</button>
+            <button class="chip" data-src="builtin">Built-in</button>
+            <button class="chip" data-src="signalrgb">SignalRGB</button>
+            <button class="chip" data-src="user">Mine</button>
+          </div>
+        </div>
+        <div id="effectList" class="effect-list"></div>
+        <div class="lib-foot">
+          <button id="btnImport">Import .html</button>
+          <button id="btnReload" title="Rescan effect folders">↻</button>
+        </div>
+      </div>
+      <div class="col center">
+        <div class="effect-title"><h2 id="effTitle">—</h2><span id="effBadges"></span></div>
+        <p id="effDesc" class="muted"></p>
+        <div class="preview-wrap"><canvas id="preview" width="320" height="200"></canvas><canvas id="previewLeds" width="960" height="600"></canvas></div>
+        <div class="stats" id="liveStats"></div>
+      </div>
+      <div class="col props">
+        <div class="props-head"><h3>Effect settings</h3><button id="btnResetEffect" class="ghost">Reset</button></div>
+        <div id="effProps"></div>
+      </div>
+    </section>
+
+    <!-- LAYOUT -->
+    <section class="page" id="page-layout">
+      <div class="col layout-main">
+        <div class="toolbar">
+          <span class="muted">Drag devices onto the canvas where they physically sit. Scroll to resize, <kbd>R</kbd> rotates, <kbd>F</kbd> mirrors.</span>
+          <div class="grow"></div>
+          <button id="btnAutoMap" class="primary">◎ Map with phone camera</button>
+        </div>
+        <div class="layout-canvas-wrap"><canvas id="layoutCanvas" width="1280" height="800"></canvas></div>
+      </div>
+      <div class="col props">
+        <h3>Layout items</h3>
+        <div id="layoutList" class="layout-list"></div>
+        <div id="layoutEdit"></div>
+      </div>
+    </section>
+
+    <!-- DEVICES -->
+    <section class="page" id="page-devices">
+      <div class="page-head">
+        <h2>Devices</h2>
+        <div class="grow"></div>
+        <button id="btnRescan">Rescan</button>
+      </div>
+      <div id="deviceEmpty" class="empty" hidden></div>
+      <div id="deviceGrid" class="device-grid"></div>
+    </section>
+
+    <!-- MAPPING -->
+    <section class="page" id="page-mapping">
+      <div class="page-head"><h2>Phone camera mapping</h2></div>
+      <div class="mapping">
+        <div class="card qr-card">
+          <div id="qrBox" class="qr"><button id="btnStartMapping" class="primary">Start mapping server</button></div>
+          <a id="mapUrl" class="mono"></a>
+          <p class="muted small" id="mapStatus"></p>
+        </div>
+        <div class="card">
+          <h3>How it works</h3>
+          <ol class="steps">
+            <li>Make sure your phone is on the same Wi-Fi/network as this PC.</li>
+            <li>Scan the QR code. Your browser will warn about the certificate (it is generated locally by Cuttlefish) — accept it to continue.</li>
+            <li>Lean the phone against something facing your case, tap <b>Start camera</b>, then <b>Map LEDs</b>.</li>
+            <li>Cuttlefish flashes binary patterns on every LED. Each camera pixel decodes which LED it sees, so every LED is located in a few seconds — then devices are placed, scaled and rotated on the canvas automatically.</li>
+          </ol>
+          <p class="muted small">Tip: open the side panel or film through the glass at a slight angle to avoid reflections. Run it again from another side and the newest detections win.</p>
+          <div id="mapResult"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="page" id="page-settings">
+      <div class="page-head"><h2>Settings</h2></div>
+      <div class="settings-grid" id="settingsGrid"></div>
+    </section>
+
+    <!-- DIAGNOSTICS -->
+    <section class="page" id="page-diagnostics">
+      <div class="page-head"><h2>Diagnostics</h2><div class="grow"></div><button id="btnSaveDiag">Save hardware report…</button></div>
+      <div class="diag">
+        <div class="card"><h3>USB HID devices</h3><div id="hidTable"></div></div>
+        <div class="card"><h3>SMBus</h3><div id="smbusInfo"></div></div>
+        <div class="card full"><h3>Log</h3><pre id="logBox" class="log"></pre></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="../shared/layout.js"></script>
+<script src="controls.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<title>Scanner</title>
+<meta description="A glowing bar sweeping back and forth."/>
+<meta publisher="Cuttlefish"/>
+<meta property="color" label="Color" type="color" default="#ff1030" min="0" max="360"/>
+<meta property="background" label="Background" type="color" default="#000000" min="0" max="360"/>
+<meta property="speed" label="Speed" type="number" min="1" max="100" default="40"/>
+<meta property="size" label="Bar size" type="number" min="4" max="160" default="40"/>
+<meta property="vertical" label="Vertical" type="boolean" default="0"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+let t = 0;
+function frame() {
+  t += speed / 1500;
+  ctx.fillStyle = background; ctx.fillRect(0, 0, W, H);
+  const len = vertical ? H : W;
+  const pos = (0.5 - 0.5 * Math.cos(t * Math.PI * 2)) * len;
+  const g = vertical ? ctx.createLinearGradient(0, pos - size, 0, pos + size) : ctx.createLinearGradient(pos - size, 0, pos + size, 0);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

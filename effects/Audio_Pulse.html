@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<title>Audio Pulse</title>
+<meta description="The whole rig flashes with the beat; colour follows the music's tone."/>
+<meta publisher="Cuttlefish"/>
+<meta property="color" label="Base color" type="color" default="#ff2d6f" min="0" max="360"/>
+<meta property="toneColor" label="Colour from tone" type="boolean" default="1"/>
+<meta property="gain" label="Sensitivity" type="number" min="1" max="100" default="60"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+let level = 0, hue = 0;
+function frame() {
+  const l = Math.max(0, (engine.audio.level + 100) / 100);
+  const target = Math.min(1, Math.pow(l, 3) * gain / 25);
+  level = target > level ? target : level * 0.9;
+  hue = (hue * 0.95) + (engine.audio.density * 360) * 0.05;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(160, 100, 0, 160, 100, 40 + level * 200);
+  const col = toneColor ? `hsl(${hue},100%,50%)` : color;
+  g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.globalAlpha = Math.min(1, 0.15 + level);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

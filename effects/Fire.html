@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<title>Fire</title>
+<meta description="Flickering flames rising up the case."/>
+<meta publisher="Cuttlefish"/>
+<meta property="intensity" label="Intensity" type="number" min="1" max="100" default="60"/>
+<meta property="palette" label="Palette" type="list" values="Fire,Ice,Toxic,Plasma" default="Fire"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+const cols = 80, rows = 50;
+let heat = new Float32Array(cols * rows);
+const pal = { Fire: [[0,0,0],[160,10,0],[255,80,0],[255,200,40],[255,255,220]], Ice: [[0,0,0],[0,30,120],[0,120,255],[120,220,255],[240,255,255]], Toxic: [[0,0,0],[10,80,0],[60,200,0],[180,255,40],[240,255,200]], Plasma: [[0,0,0],[80,0,120],[200,0,200],[255,80,200],[255,220,255]] };
+function color(v) {
+  const p = pal[palette] || pal.Fire; const x = Math.max(0, Math.min(0.999, v)) * (p.length - 1); const i = Math.floor(x), f = x - i;
+  return p[i].map((c, k) => c + (p[i + 1][k] - c) * f);
+}
+function frame() {
+  for (let x = 0; x < cols; x++) heat[(rows - 1) * cols + x] = Math.random() < intensity / 100 ? 1 : Math.random() * 0.4;
+  const next = new Float32Array(cols * rows);
+  for (let y = 0; y < rows - 1; y++) for (let x = 0; x < cols; x++) {
+    const b = (y + 1) * cols;
+    const v = (heat[b + x] + heat[b + ((x + cols - 1) % cols)] + heat[b + ((x + 1) % cols)] + (heat[Math.min(rows - 1, y + 2) * cols + x])) / 4.15;
+    next[y * cols + x] = v;
+  }
+  for (let x = 0; x < cols; x++) next[(rows - 1) * cols + x] = heat[(rows - 1) * cols + x];
+  heat = next;
+  const cw = W / cols, ch = H / rows;
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const c = color(heat[y * cols + x]);
+    ctx.fillStyle = `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+    ctx.fillRect(x * cw, y * ch, cw + 1, ch + 1);
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

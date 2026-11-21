@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<title>Screen Ambience</title>
+<meta description="Extends your screen's colours onto your PC (enable screen capture in Settings)."/>
+<meta publisher="Cuttlefish"/>
+<meta property="saturationBoost" label="Saturation boost" type="number" min="0" max="100" default="40"/>
+<meta property="smoothing" label="Smoothing" type="number" min="0" max="95" default="70"/>
+<meta requirements="screen"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+let prev = null;
+function frame() {
+  const z = engine.zone;
+  if (!prev) prev = new Float32Array(560 * 3);
+  const k = smoothing / 100;
+  const cw = W / 28, ch = H / 20;
+  for (let i = 0; i < 560; i++) {
+    const h = z.hue[i] || 0, s = Math.min(100, (z.saturation[i] || 0) * (1 + saturationBoost / 50)), l = z.lightness[i] || 0;
+    prev[i * 3] = prev[i * 3] * k + h * (1 - k);
+    prev[i * 3 + 1] = prev[i * 3 + 1] * k + s * (1 - k);
+    prev[i * 3 + 2] = prev[i * 3 + 2] * k + l * (1 - k);
+    ctx.fillStyle = `hsl(${prev[i * 3]},${prev[i * 3 + 1]}%,${prev[i * 3 + 2]}%)`;
+    ctx.fillRect((i % 28) * cw, Math.floor(i / 28) * ch, cw + 1, ch + 1);
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

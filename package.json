@@ -1,0 +1,104 @@
+{
+  "name": "cuttlefish",
+  "productName": "Cuttlefish",
+  "version": "0.1.0",
+  "description": "Free RGB lighting engine compatible with SignalRGB lighting effects and device plugins, with smartphone camera case mapping.",
+  "main": "src/main/main.js",
+  "author": "Coral-coder",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Coral-coder/Cuttlefish.git"
+  },
+  "homepage": "https://github.com/Coral-coder/Cuttlefish",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist:win": "electron-builder --win --publish never",
+    "release:win": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "koffi": "^3.3.8",
+    "node-hid": "^3.4.0",
+    "qrcode": "^1.5.4",
+    "selfsigned": "^5.5.0",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.coralcoder.cuttlefish",
+    "productName": "Cuttlefish",
+    "copyright": "Copyright \u00a9 2026 Cuttlefish contributors",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json",
+      "LICENSE",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "effects",
+        "to": "effects"
+      },
+      {
+        "from": "resources/pawnio",
+        "to": "pawnio",
+        "filter": [
+          "*.bin"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/node-hid/**",
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "requireAdministrator",
+      "artifactName": "Cuttlefish-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cuttlefish"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Coral-coder",
+        "repo": "Cuttlefish",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

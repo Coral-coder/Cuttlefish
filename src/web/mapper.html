@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>Cuttlefish Mapper</title>
+<link rel="stylesheet" href="mapper.css">
+</head>
+<body>
+<header><span class="logo">◐</span> Cuttlefish <b>Mapper</b></header>
+<main>
+  <section id="intro" class="card">
+    <h1>Map your PC's lighting</h1>
+    <ol>
+      <li>Dim the room lights if you can.</li>
+      <li>Rest your phone against something so it can't move, facing the side of the case where the RGB is visible.</li>
+      <li>Tap <b>Start camera</b>, frame the whole case, then tap <b>Map LEDs</b>. Keep still for about 15&nbsp;seconds.</li>
+    </ol>
+    <button id="btnCamera" class="primary">Start camera</button>
+    <p class="hint" id="secureHint"></p>
+  </section>
+  <section id="stage" hidden>
+    <div class="viewport">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div id="progress" class="progress" hidden><div class="bar"><span id="bar"></span></div><span id="progressText"></span></div>
+    </div>
+    <div class="row">
+      <button id="btnFrame">Light all LEDs</button>
+      <button id="btnMap" class="primary">Map LEDs</button>
+    </div>
+    <label class="row small"><span>Settle time</span><input id="settle" type="range" min="120" max="900" step="30" value="300"><output id="settleOut">300 ms</output></label>
+    <p class="hint" id="status">Connecting…</p>
+    <div id="result" class="card" hidden></div>
+  </section>
+</main>
+<script src="mapper.js"></script>
+</body>
+</html>

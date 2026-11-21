@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<title>Gradient</title>
+<meta description="A two-colour gradient at any angle, optionally drifting."/>
+<meta publisher="Cuttlefish"/>
+<meta property="colorA" label="Color A" type="color" default="#ff7a00" min="0" max="360"/>
+<meta property="colorB" label="Color B" type="color" default="#7a00ff" min="0" max="360"/>
+<meta property="angle" label="Angle" type="number" min="0" max="360" default="90"/>
+<meta property="drift" label="Drift" type="number" min="0" max="100" default="15"/>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="exCanvas" width="320" height="200"></canvas>
+<script>
+const c = document.getElementById('exCanvas');
+const ctx = c.getContext('2d');
+const W = 320, H = 200;
+let t = 0;
+function frame() {
+  t += drift / 3000;
+  const a = (angle * Math.PI) / 180;
+  const dx = Math.cos(a) * 200, dy = Math.sin(a) * 200;
+  const g = ctx.createLinearGradient(160 - dx, 100 - dy, 160 + dx, 100 + dy);
+  const o = (t % 1);
+  g.addColorStop(0, colorA); g.addColorStop(Math.max(0.01, Math.min(0.99, 0.5 + 0.4 * Math.sin(o * Math.PI * 2))), colorB); g.addColorStop(1, colorA);
+  ctx.fillStyle = drift > 0 ? g : (() => { const h = ctx.createLinearGradient(160 - dx, 100 - dy, 160 + dx, 100 + dy); h.addColorStop(0, colorA); h.addColorStop(1, colorB); return h; })();
+  ctx.fillRect(0, 0, W, H);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

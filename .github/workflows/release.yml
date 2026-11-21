@@ -1,0 +1,75 @@
+name: Release
+# Every push to main builds Windows installers. When package.json carries a
+# version that has not been released yet, the build is published as a GitHub
+# Release; installed copies of Cuttlefish pick it up and update themselves.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Read version
+        id: v
+        shell: bash
+        run: |
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Already released?
+        id: exists
+        shell: bash
+        run: |
+          if gh release view "v${{ steps.v.outputs.version }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm ci
+      - name: Bundle PawnIO SMBus modules
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path dl, resources/pawnio | Out-Null
+          gh release download --repo namazso/PawnIO.Modules --dir dl --pattern '*' --clobber
+          Get-ChildItem dl -Filter *.zip | ForEach-Object { Expand-Archive $_.FullName -DestinationPath "dl/$($_.BaseName)" -Force }
+          Get-ChildItem dl -Recurse -Include SmbusI801.bin,SmbusPIIX4.bin | Copy-Item -Destination resources/pawnio -Force
+          Get-ChildItem resources/pawnio
+      - name: Build (publish if new version)
+        shell: bash
+        run: |
+          if [ "${{ steps.exists.outputs.released }}" = "true" ]; then
+            npx electron-builder --win --publish never
+          else
+            npx electron-builder --win --publish always
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cuttlefish-windows
+          path: |
+            dist/*.exe
+            dist/latest.yml
+          if-no-files-found: warn
