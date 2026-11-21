@@ -469,6 +469,11 @@
       card.append(el('div', { class: 'ctl' }, el('label', {}, el('span', {}, `${ch.id} LED count`), el('span', {}, `max ${ch.limit}`)), input));
     }
     if (d.furyStats) card.append(furyPanel(d));
+    if (d.lcd && d.lcd.length) {
+      card.append(el('details', { 'data-key': `${d.key}#lcd` }, el('summary', { class: 'muted' }, 'LCD display (experimental)'),
+        el('p', { class: 'small muted' }, 'This device has a screen. Cuttlefish does not drive it yet; it recorded the LCD API this plugin uses:'),
+        ...d.lcd.map((c) => el('div', { class: 'small mono' }, c))));
+    }
     if ((d.params || []).length) {
       const det = el('details', { 'data-key': d.key }, el('summary', {}, 'Device settings'));
       if (detailsOpen) det.open = true;
@@ -689,6 +694,8 @@
           ...sm.buses.map((b) => el('p', {}, el('b', {}, b.name), ` vendor 0x${(b.info.vendor || 0).toString(16)} · ${b.stats.tx} transactions · ${b.stats.errors} errors · avg ${(b.stats.us / Math.max(1, b.stats.tx)).toFixed(0)} µs`))),
       el('p', { class: 'muted small' }, `OpenRGB: ${d.openrgb && d.openrgb.connected ? 'connected' : d.openrgb && d.openrgb.error ? d.openrgb.error : 'off'}`),
       el('p', { class: 'muted small' }, `Motherboard: ${d.state.motherboard || 'unknown'} · ${d.state.os}`),
+      el('h3', { style: 'margin-top:14px' }, 'Hardware monitor'),
+      sensorLine(),
       el('h3', { style: 'margin-top:14px' }, 'Effects'),
       el('p', { class: 'small' }, Object.entries(S.effectSources || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || 'none'),
       lastImport ? el('div', { class: 'small muted' },
@@ -705,6 +712,17 @@
     $('logBox').textContent = logs.slice(-300).map((l) => `${new Date(l.t).toLocaleTimeString()} [${l.role}] ${l.msg}`).join('\n');
     $('logBox').scrollTop = $('logBox').scrollHeight;
   }
+  function sensorLine() {
+    const s = (S && S.sensors) || {};
+    const cpu = s.cpu || {}, gpu = s.gpu, mem = s.mem || {};
+    const parts = [
+      `CPU ${cpu.usage != null ? cpu.usage + '%' : '—'}${cpu.temp != null ? ' / ' + cpu.temp + '°C' : ''}`,
+      gpu ? `GPU ${gpu.usage != null ? gpu.usage + '%' : '—'}${gpu.temp != null ? ' / ' + gpu.temp + '°C' : ''}` : 'GPU —',
+      `RAM ${mem.usedGB != null ? mem.usedGB + '/' + mem.totalGB + ' GB' : '—'}`,
+    ];
+    return el('p', { class: 'small', id: 'sensorLine' }, parts.join('  ·  '));
+  }
+  cf.onSensors((d) => { if (S) S.sensors = d; const e = $('sensorLine'); if (e && page === 'diagnostics') e.replaceWith(sensorLine()); });
   cf.onLog((l) => { logs.push(l); if (logs.length > 600) logs.shift(); renderLogs(); });
   $('btnSaveDiag').onclick = () => cf.saveDiagnostics();
 

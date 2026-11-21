@@ -271,6 +271,24 @@ class PluginInstance {
     this._build();
   }
 
+  // Record LCD-API usage (method + argument shapes), once per signature, so the
+  // real LCD implementation can be built to match what the plugin expects.
+  lcdLog(method, args) {
+    this.lcdCalls = this.lcdCalls || new Map();
+    const shape = args.map((a) => {
+      if (a == null) return String(a);
+      if (Array.isArray(a) || ArrayBuffer.isView(a)) return `${a.constructor.name}(${a.length})`;
+      if (typeof a === 'object') return `{${Object.keys(a).slice(0, 6).join(',')}}`;
+      return `${typeof a}:${String(a).slice(0, 24)}`;
+    }).join(', ');
+    const key = `${method}(${shape})`;
+    if (!this.lcdCalls.has(key)) {
+      this.lcdCalls.set(key, 0);
+      this.log(`LCD API: ${key}`);
+    }
+    this.lcdCalls.set(key, this.lcdCalls.get(key) + 1);
+  }
+
   log(msg) {
     const line = typeof msg === 'string' ? msg : (() => { try { return JSON.stringify(msg); } catch { return String(msg); } })();
     this.logs.push(line);
@@ -303,12 +321,18 @@ class PluginInstance {
         return out;
       },
       flush() {},
-      // Newer plugin APIs Cuttlefish does not fully implement yet: accept them as
-      // no-ops so the device still works for its RGB lighting (LCD output is TODO).
-      setProtocol() {},
-      getProtocol: () => 0,
-      setFrame() {}, sendFrame() {}, getFrame: () => [], writeFrame() {},
-      setLcd() {}, lcdWrite() {}, setImage() {},
+      // LCD-screen APIs (e.g. NZXT Kraken Elite). Cuttlefish does not drive the LCD
+      // yet, so these accept the calls as no-ops — but they record how the plugin
+      // uses them (once each) so the real implementation can match the contract.
+      setProtocol: (...a) => self.lcdLog('setProtocol', a),
+      getProtocol: () => { self.lcdLog('getProtocol', []); return 0; },
+      setFrame: (...a) => self.lcdLog('setFrame', a),
+      sendFrame: (...a) => self.lcdLog('sendFrame', a),
+      getFrame: (...a) => { self.lcdLog('getFrame', a); return self.host.lcdFrame ? self.host.lcdFrame(self.key, a) : []; },
+      writeFrame: (...a) => self.lcdLog('writeFrame', a),
+      setLcd: (...a) => self.lcdLog('setLcd', a),
+      lcdWrite: (...a) => self.lcdLog('lcdWrite', a),
+      setImage: (...a) => self.lcdLog('setImage', a),
       bulk_transfer() { return []; },
       control_transfer() {},
       getLastReadSize: () => self.lastReadSize,
@@ -409,7 +433,10 @@ class PluginInstance {
       console: { log: (d) => self.log(d), warn: (d) => self.log(d), error: (d) => self.log(d) },
       service: stubProxy(),
       hexToRgb,
-      __cfImport: () => stubImport(),
+      __cfImport: (mod) => {
+        if (/lcd|screen|image|display/i.test(String(mod))) { self.lcdLog(`import ${mod}`, []); }
+        return stubImport();
+      },
       Math, JSON, Date, Array, Object, String, Number, Boolean, Error, Map, Set,
       Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array, Float64Array, ArrayBuffer, DataView,
       parseInt, parseFloat, isNaN, isFinite, BigInt,
@@ -624,6 +651,7 @@ class PluginInstance {
       channels: [...this.channels.values()].map((c) => ({ id: c.id, limit: c.limit, count: this._channelCount(c.id) })),
       failed: this.failed,
       warning: this.initWarning || null,
+      lcd: this.lcdCalls ? [...this.lcdCalls.keys()] : null,
       image: this.imageUrl,
       items: this.items(),
       logs: this.logs.slice(-30),

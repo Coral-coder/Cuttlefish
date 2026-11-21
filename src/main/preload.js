@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('cf', {
   srgbDownload: (item) => invoke('srgb:download', item),
   onSrgbAvailable: on('srgb-available'),
   onConflicts: on('conflicts'),
+  onSensors: on('sensors'),
   openExternal: (u) => invoke('open:external', u),
   onFrame: on('frame'),
   onStats: on('stats'),

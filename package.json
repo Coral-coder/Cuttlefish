@@ -1,7 +1,7 @@
 {
   "name": "cuttlefish",
   "productName": "Cuttlefish",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Free RGB lighting engine compatible with SignalRGB lighting effects and device plugins, with smartphone camera case mapping.",
   "main": "src/main/main.js",
   "author": "Coral-coder",

@@ -14,6 +14,9 @@ const updater = require('./updater');
 const library = require('./library');
 const srgbImport = require('./signalrgb-import');
 const { SignalRGBAccount } = require('./signalrgb-account');
+const { Sensors } = require('./sensors');
+
+const sensors = new Sensors();
 
 const ROOT = path.join(__dirname, '..', '..');
 const BUILTIN_EFFECTS = app.isPackaged ? path.join(process.resourcesPath, 'effects') : path.join(ROOT, 'effects');
@@ -388,6 +391,7 @@ function stateSnapshot() {
     update: updater.status(),
     conflicts,
     signalrgb: { imported: settings.get('signalrgbImported'), account: accountClient().status() },
+    sensors: sensors.latest(),
   };
 }
 
@@ -797,6 +801,14 @@ app.whenReady().then(async () => {
   updater.init({ app, settings, onStatus: (s) => send('update', s), beforeInstall: async () => { quitting = true; await devices.stop(false); } });
 
   setupDisplaySleep();
+  // Hardware monitoring for effects (engine.sensors), the Kraken LCD and the UI.
+  sensors.start(2000);
+  setInterval(() => {
+    const d = sensors.latest();
+    if (runner) runner.send('engine:sensors', d);
+    if (devices) devices.broadcast({ type: 'sensors', data: d });
+    send('sensors', d);
+  }, 2000);
   powerMonitor.on('suspend', () => devices && devices.broadcast({ type: 'mapping', active: true, pattern: { kind: 'off' }, offsets: {} }));
   powerMonitor.on('resume', () => setTimeout(() => devices && devices.setMapping(false), 2000));
 });
