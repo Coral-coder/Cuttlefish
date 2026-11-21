@@ -39,23 +39,17 @@ jobs:
         shell: bash
         run: |
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-      - name: Already released?
+      - name: Release state
         id: exists
         shell: bash
         run: |
-          if gh release view "v${{ steps.v.outputs.version }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          tag="v${{ steps.v.outputs.version }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > assets.txt 2>/dev/null; then
             echo "released=true" >> "$GITHUB_OUTPUT"
+            if grep -qx latest.yml assets.txt && grep -q '\.exe$' assets.txt; then echo "complete=true" >> "$GITHUB_OUTPUT"; else echo "complete=false" >> "$GITHUB_OUTPUT"; fi
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Create version tag
-        if: steps.exists.outputs.released == 'false'
-        shell: bash
-        run: |
-          tag="v${{ steps.v.outputs.version }}"
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            git tag "$tag"
-            git push origin "$tag"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
           fi
       - run: npm ci
       - name: Bundle PawnIO SMBus modules
@@ -67,13 +61,21 @@ jobs:
           Get-ChildItem dl -Filter *.zip | ForEach-Object { Expand-Archive $_.FullName -DestinationPath "dl/$($_.BaseName)" -Force }
           Get-ChildItem dl -Recurse -Include SmbusI801.bin,SmbusPIIX4.bin | Copy-Item -Destination resources/pawnio -Force
           Get-ChildItem resources/pawnio
-      - name: Build (publish if new version)
+      - name: Build
+        shell: bash
+        run: npx electron-builder --win --publish never
+      - name: Publish release
+        if: steps.exists.outputs.complete == 'false'
         shell: bash
         run: |
+          tag="v${{ steps.v.outputs.version }}"
+          files=(dist/*.exe dist/*.exe.blockmap dist/latest.yml)
+          ls -la "${files[@]}"
           if [ "${{ steps.exists.outputs.released }}" = "true" ]; then
-            npx electron-builder --win --publish never
+            gh release upload "$tag" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            npx electron-builder --win --publish always
+            gh release create "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Cuttlefish ${{ steps.v.outputs.version }}" --notes "Automatic release. Installed copies update themselves."
           fi
       - uses: actions/upload-artifact@v4
         with:
