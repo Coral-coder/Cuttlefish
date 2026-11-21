@@ -582,6 +582,7 @@
         settingRow('Start with Windows', 'Runs in the tray at login (elevated, for RGB memory access).', toggle('autostart', st.autostart)),
         settingRow('Automatic updates', `Installs new versions silently from GitHub. ${upText}`, el('div', { style: 'display:flex;gap:8px;align-items:center' }, el('button', { onclick: () => cf.checkUpdate() }, 'Check now'), toggle('autoUpdate', st.autoUpdate))),
         settingRow('Frame rate', 'Effect rendering and device update rate.', fpsSel),
+        settingRow('Turn off lighting with the display', 'When your monitor sleeps or the PC locks, the RGB turns off too; it comes back when the screen wakes.', toggle('sleepWithDisplay', st.sleepWithDisplay)),
         settingRow('Audio reactive effects', 'Captures system audio (loopback) for effects that use engine.audio.', toggle('audio', st.audio)),
         settingRow('Screen reactive effects', 'Samples the screen for ambience effects and game meters.', toggle('screen', st.screen))),
       srgbCard(),

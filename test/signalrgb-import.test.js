@@ -37,3 +37,10 @@ test('detect never throws and reports structure', () => {
   const d = imp.detect();
   assert.ok('found' in d && 'pluginDirs' in d && 'firebase' in d);
 });
+
+const dp = require('../src/main/display-power');
+test('powercfg timeout parse', () => {
+  const sample = 'Power Setting GUID: 3c0bc021 (Turn off display after)\n  Current AC Power Setting Index: 0x0000258\n  Current DC Power Setting Index: 0x0000012c\n';
+  assert.strictEqual(dp.parsePowercfgSeconds(sample, 'Current AC Power Setting Index:'), 0x258);
+  assert.strictEqual(dp.parsePowercfgSeconds(sample, 'Current DC Power Setting Index:'), 0x12c);
+});

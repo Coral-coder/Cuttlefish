@@ -653,6 +653,10 @@ function findPluginFiles(dirs) {
 // Load plugins. Later directories override earlier ones for the same VID/PID set
 // (mirrors SignalRGB: user plugins override built-in ones).
 function loadPlugins(dirs, log) {
+  // For the same device signature, a later folder (e.g. the user's SignalRGB
+  // install) overrides an earlier one (the public library). We keep the override
+  // as primary but RETAIN the earlier ones as alternates, so if the override fails
+  // to drive the device (e.g. registers 0 LEDs), the device host can fall back.
   const byIds = new Map();
   for (const f of findPluginFiles(dirs)) {
     try {
@@ -661,6 +665,8 @@ function loadPlugins(dirs, log) {
       const m = new PluginModule(f, src);
       if (m.loadWarning) log && log(`Plugin ${path.basename(f)} ${m.loadWarning}`);
       const sig = `${m.meta.type}|${m.meta.vendorIds.join(',')}|${m.meta.productIds.join(',')}|${m.meta.type === 'SMBUS' ? m.meta.name : ''}`;
+      const prev = byIds.get(sig);
+      if (prev) { m.alternates = [prev, ...(prev.alternates || [])]; prev.alternates = []; }
       byIds.set(sig, m);
     } catch (e) {
       log && log(`Plugin ${path.basename(f)} failed to load: ${e.message}`);

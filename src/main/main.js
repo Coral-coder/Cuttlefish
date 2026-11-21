@@ -183,7 +183,7 @@ function hostConfig() {
     placements: settings.get('placements'),
     params: settings.get('params'),
     enabled: settings.get('enabled'),
-    brightness: settings.get('paused') ? 0 : settings.get('brightness'),
+    brightness: (settings.get('paused') || displayOff) ? 0 : settings.get('brightness'),
     deviceBrightness: settings.get('deviceBrightness'),
     channelCounts: settings.get('channelCounts'),
     fps: settings.get('fps'),
@@ -373,6 +373,9 @@ function stateSnapshot() {
       audio: settings.get('audio'),
       screen: settings.get('screen'),
       autostart: settings.get('autostart'),
+      sleepWithDisplay: settings.get('sleepWithDisplay'),
+      displayIdleMinutes: settings.get('displayIdleMinutes'),
+      displayOff,
       autoUpdate: settings.get('autoUpdate'),
       effectDirs: settings.get('effectDirs'),
       pluginDirs: settings.get('pluginDirs'),
@@ -473,8 +476,41 @@ function applyAutostart() {
   }
 }
 
+// Turn lighting off when the display sleeps / the session locks, and back on when
+// it wakes. Windows gives no direct "monitor off" event to Electron, so we use
+// GUID_CONSOLE_DISPLAY_STATE via the native helper when available, and otherwise
+// fall back to lock/unlock plus an idle-time threshold.
+let displayOff = false;
+let monitorTimeoutSec = 0;
+function setDisplayOff(off) {
+  if (displayOff === off) return;
+  displayOff = off;
+  pushConfig(['brightness']);
+  send('log', { t: Date.now(), role: 'power', msg: `Display ${off ? 'asleep — lights off' : 'awake — lights restored'}` });
+  sendState();
+}
+
+function setupDisplaySleep() {
+  // Read the OS monitor-sleep timeout so "lights off when the screen sleeps" lines
+  // up with the real timer; blacken when input has been idle at least that long.
+  try { monitorTimeoutSec = require('./display-power').monitorTimeoutSeconds(); } catch { monitorTimeoutSec = 0; }
+  powerMonitor.on('lock-screen', () => { if (settings.get('sleepWithDisplay') !== false) setDisplayOff(true); });
+  powerMonitor.on('unlock-screen', () => setDisplayOff(false));
+  powerMonitor.on('resume', () => setDisplayOff(false));
+  powerMonitor.on('user-did-become-active', () => setDisplayOff(false));
+  setInterval(() => {
+    if (settings.get('sleepWithDisplay') === false) { if (displayOff) setDisplayOff(false); return; }
+    const override = Number(settings.get('displayIdleMinutes')) || 0;
+    const threshold = override > 0 ? override * 60 : monitorTimeoutSec;
+    if (!threshold) return; // monitor set to never sleep and no override
+    const idle = powerMonitor.getSystemIdleTime();
+    if (idle >= threshold) setDisplayOff(true);
+    else if (idle < 5) setDisplayOff(false);
+  }, 4000);
+}
+
 // ------------------------------------------------------------------ IPC
-const SETTABLE = new Set(['fps', 'openrgb', 'fury', 'smbusPlugins', 'smbusEnabled', 'useSignalRgbFolders', 'audio', 'screen', 'autostart', 'autoUpdate', 'mapping']);
+const SETTABLE = new Set(['fps', 'openrgb', 'fury', 'smbusPlugins', 'smbusEnabled', 'useSignalRgbFolders', 'audio', 'screen', 'autostart', 'autoUpdate', 'mapping', 'sleepWithDisplay', 'displayIdleMinutes']);
 
 function registerIpc() {
   ipcMain.on('effect:init', (e) => {
@@ -760,6 +796,7 @@ app.whenReady().then(async () => {
 
   updater.init({ app, settings, onStatus: (s) => send('update', s), beforeInstall: async () => { quitting = true; await devices.stop(false); } });
 
+  setupDisplaySleep();
   powerMonitor.on('suspend', () => devices && devices.broadcast({ type: 'mapping', active: true, pattern: { kind: 'off' }, offsets: {} }));
   powerMonitor.on('resume', () => setTimeout(() => devices && devices.setMapping(false), 2000));
 });

@@ -315,7 +315,14 @@ function scanHid() {
       vendorId: g.vendorId, productId: g.productId, product: g.product, manufacturer: g.manufacturer,
       serial: g.serial, endpoints: g.endpoints.map(({ path: p, ...rest }) => rest), key,
     };
-    const matches = hidModules.filter((m) => m.matches(g.vendorId, g.productId));
+    const matches = [];
+    for (const m of hidModules) {
+      if (m.matches(g.vendorId, g.productId)) {
+        matches.push(m);
+        // include overridden alternates (e.g. the public plugin behind a user one)
+        for (const alt of m.alternates || []) if (alt.matches(g.vendorId, g.productId) && !['SMBUS', 'RAWUSB'].includes(alt.meta.type)) matches.push(alt);
+      }
+    }
     entry.plugin = matches.length ? matches[0].meta.name : null;
     entry.candidates = matches.map((m) => m.meta.name);
 
@@ -374,7 +381,7 @@ function scanHid() {
         const leds = inst.items().reduce((a, it) => a + it.ledPositions.length, 0);
         // A tentative (interface-only) match that registers no LEDs is probably the
         // wrong variant — keep looking for a candidate that actually has LEDs.
-        if (tentative && leds === 0 && matches.indexOf(mod) < matches.length - 1) {
+        if (leds === 0 && matches.indexOf(mod) < matches.length - 1) {
           reasons.push(`${mod.meta.name}: started but reported 0 LEDs`);
           inst.shutdown(false);
           io.hid.close();

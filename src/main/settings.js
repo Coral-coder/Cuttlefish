@@ -25,6 +25,8 @@ const DEFAULTS = {
   audio: true,
   screen: false,
   autostart: true,
+  sleepWithDisplay: true,
+  displayIdleMinutes: 0,
   autoUpdate: true,
   startMinimized: false,
   firstRun: true,
