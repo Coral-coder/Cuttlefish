@@ -42,15 +42,35 @@ function fetchers() {
   return list;
 }
 
-async function httpFetch(url, opts) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const RETRY_STATUS = new Set([406, 429, 500, 502, 503, 504]);
+
+// Fetch with backoff: GitLab/GitHub rate limits answer 429 (and GitLab sometimes 406
+// for throttled archive downloads). Honour Retry-After, back off, try both stacks.
+async function httpFetch(url, opts, { tries = 4, onWait } = {}) {
   let last = null;
-  for (const f of fetchers()) {
-    try {
-      const res = await f(url, opts);
-      if (res.ok) return res;
-      last = new Error(`HTTP ${res.status} from ${url}`);
-    } catch (e) {
-      last = e;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    for (const f of fetchers()) {
+      try {
+        const res = await f(url, opts);
+        if (res.ok) return res;
+        last = new Error(`HTTP ${res.status} from ${url}`);
+        last.status = res.status;
+        const ra = Number(res.headers.get('retry-after'));
+        if (RETRY_STATUS.has(res.status)) {
+          last.retryAfter = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 0;
+          break; // same answer from the other stack; wait instead
+        }
+        if (res.status === 404) throw last;
+      } catch (e) {
+        if (e.status === 404) throw e;
+        last = e;
+      }
+    }
+    if (attempt < tries - 1) {
+      const wait = Math.min(120000, (last && last.retryAfter) || 5000 * 3 ** attempt);
+      if (onWait) onWait(wait, last);
+      await sleep(wait);
     }
   }
   throw last || new Error(`Download failed: ${url}`);
@@ -65,7 +85,7 @@ async function downloadAny(urls, onProgress) {
 }
 
 async function download(url, onProgress) {
-  const res = await httpFetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' } });
+  const res = await httpFetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' } }, { tries: 4 });
   const total = Number(res.headers.get('content-length')) || 0;
   const chunks = [];
   let got = 0;
@@ -90,7 +110,8 @@ async function fetchPluginFilesIndividually(dest, p) {
   const files = [];
   let url = `${REPO_API}/tree?path=Plugins&recursive=true&per_page=100&pagination=keyset&order_by=path&sort=asc`;
   while (url) {
-    const res = await httpFetch(url, { headers: { 'User-Agent': UA } });
+    const res = await httpFetch(url, { headers: { 'User-Agent': UA } }, { tries: 6, onWait: (ms) => p({ task: 'plugins', state: 'downloading', note: `GitLab rate limit, waiting ${Math.round(ms / 1000)}s` }) });
+    await sleep(300);
     for (const e of await res.json()) {
       if (e.type === 'blob' && e.path.startsWith('Plugins/')) {
         const rel = pluginPathFilter(e.path.slice('Plugins/'.length));
@@ -102,46 +123,52 @@ async function fetchPluginFilesIndividually(dest, p) {
     url = m ? m[1] : null;
   }
   let done = 0;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function getOne(f) {
+    const target = path.join(dest, f.rel);
+    try { if (fs.statSync(target).size > 0) return true; } catch { /* not yet downloaded */ }
     const urls = [RAW_BASE + f.path.split('/').map(encodeURIComponent).join('/'),
       `${REPO_API}/files/${encodeURIComponent(f.path)}/raw?ref=master`];
     for (let attempt = 0; attempt < 6; attempt++) {
       for (const u of urls) {
         try {
-          const res = await httpFetch(u, { headers: { 'User-Agent': UA } });
+          const res = await httpFetch(u, { headers: { 'User-Agent': UA } }, { tries: 1 });
           const buf = Buffer.from(await res.arrayBuffer());
-          const target = path.join(dest, f.rel);
           fs.mkdirSync(path.dirname(target), { recursive: true });
           fs.writeFileSync(target, buf);
           return true;
         } catch { /* try next */ }
       }
-      await sleep(1000 * (attempt + 1)); // rate limited / transient
+      await sleep(5000 * (attempt + 1)); // rate limited / transient
     }
     return false;
   }
   const queue = files.slice();
   let ok = 0;
-  await Promise.all(Array.from({ length: 6 }, async () => {
+  await Promise.all(Array.from({ length: 2 }, async () => {
     while (queue.length) {
       const f = queue.shift();
       if (await getOne(f)) ok++;
+      await sleep(250);
       done++;
       p({ task: 'plugins', state: 'downloading', progress: done / files.length });
     }
   }));
-  if (!ok) throw new Error('Could not download any plugin files');
+  if (ok < files.length) throw new Error(`Downloaded ${ok}/${files.length} plugin files (rate limited); will resume`);
   return ok;
 }
 
-async function installOfficialPlugins(userDir, progress) {
+let installing = null;
+function installOfficialPlugins(userDir, progress) {
+  if (!installing) installing = doInstallOfficialPlugins(userDir, progress).finally(() => { installing = null; });
+  return installing;
+}
+
+async function doInstallOfficialPlugins(userDir, progress) {
   const p = progress || (() => {});
   p({ task: 'plugins', state: 'downloading' });
   const dest = officialPluginDir(userDir);
   const tmp = `${dest}.tmp`;
-  fs.rmSync(tmp, { recursive: true, force: true });
-  fs.mkdirSync(tmp, { recursive: true });
+  fs.mkdirSync(tmp, { recursive: true }); // kept between attempts so downloads resume
   let n = 0;
   let method = 'archive';
   try {
