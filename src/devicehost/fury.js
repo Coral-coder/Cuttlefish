@@ -65,47 +65,48 @@ class FuryController {
   }
 
   // ---------------------------------------------------------------- detection
+  // Probe the RGB controller addresses directly (DDR4 0x58-0x5f, DDR5 0x60-0x67)
+  // and confirm via the "FURY" signature. We do NOT require the SPD at 0x50+slot
+  // to answer first: on DDR5 the SPD5 hub is often contended or write-protected,
+  // which previously made detection bail even when the RGB controller was present.
   static detect(bus, log) {
     log = log || (() => {});
     const found = [];
-    for (let slot = 0; slot < 8; slot++) {
-      const spd = 0x50 + slot;
-      if (bus.writeQuick(spd) !== 0) continue; // no DIMM in this slot
-      let ddr = 0;
-      const mr0 = bus.readByteData(spd, 0x00);
-      if (mr0 === 0x51) ddr = 5; // SPD5 hub device type
-      else if (bus.readByteData(spd, 0x02) === 0x0c) ddr = 4; // DDR4 SPD memory type
-      if (!ddr) continue;
-      const addr = (ddr === 5 ? 0x60 : 0x58) + slot;
-      if (bus.writeQuick(addr) !== 0) continue;
-      const res = FuryController.checkSignature(bus, addr);
-      if (res.ok) {
-        found.push({ slot, addr, ddr, model: res.model, name: MODELS[res.model] || `FURY DDR${ddr} RGB` });
-        log(`Kingston FURY found: slot ${slot} @0x${addr.toString(16)} DDR${ddr} model 0x${res.model.toString(16)}`);
+    const ranges = [{ ddr: 5, base: 0x60 }, { ddr: 4, base: 0x58 }];
+    for (const { ddr, base } of ranges) {
+      for (let slot = 0; slot < 8; slot++) {
+        const addr = base + slot;
+        // A present controller ACKs a quick write; retry once (bus can be flaky).
+        if (bus.writeQuick(addr) !== 0 && bus.writeQuick(addr) !== 0) continue;
+        const res = FuryController.checkSignature(bus, addr);
+        if (res.ok) {
+          found.push({ slot, addr, ddr, model: res.model, name: MODELS[res.model] || `FURY DDR${ddr} RGB` });
+          log(`Kingston FURY found: slot ${slot} @0x${addr.toString(16)} DDR${ddr} model 0x${res.model.toString(16)}`);
+        } else if (res.reason) {
+          log(`FURY probe @0x${addr.toString(16)}: ${res.reason}`);
+        }
       }
+      if (found.length) break; // one generation per system
     }
-    if (!found.length) return null;
-    // All sticks on one controller must share a generation.
-    const ddr = found[0].ddr;
-    return found.filter((s) => s.ddr === ddr);
+    return found.length ? found : null;
   }
 
-  static checkSignature(bus, addr) {
+  static checkSignature(bus, addr, allowProtected) {
     const delay = 10;
-    if (bus.writeByteData(addr, REG.APPLY, BEGIN) !== 0) return { ok: false };
+    // 0x58/0x60 ranges are the RGB controller, not SPD, so writing APPLY is allowed.
+    if (bus.writeByteData(addr, REG.APPLY, BEGIN, true) !== 0) return { ok: false, reason: 'no ACK to begin-transaction' };
     sleepSync(delay);
     const expect = 'FURY';
+    const got = [];
     let ok = true;
-    for (let i = 1; i <= 4 && ok; i++) {
+    for (let i = 1; i <= 4; i++) {
       let v = -1;
       for (let r = 0; r < 3; r++) {
         const w = bus.readWordData(addr, i);
         sleepSync(delay);
-        if (w >= 0 && w < 0xffff) {
-          v = hi(w);
-          break;
-        }
+        if (w >= 0 && w < 0xffff) { v = hi(w); break; }
       }
+      got.push(v);
       if (v !== expect.charCodeAt(i - 1)) ok = false;
     }
     let model = 0;
@@ -113,9 +114,10 @@ class FuryController {
       model = hi(bus.readWordData(addr, REG.MODEL));
       sleepSync(delay);
     }
-    bus.writeByteData(addr, REG.APPLY, END);
+    bus.writeByteData(addr, REG.APPLY, END, true);
     sleepSync(delay);
-    return { ok: ok && model >= 0, model };
+    const sig = got.map((c) => (c > 32 && c < 127 ? String.fromCharCode(c) : '?')).join('');
+    return { ok: ok && model >= 0, model, reason: ok ? null : `signature read "${sig}" (want FURY)` };
   }
 
   // ------------------------------------------------------------------- writes
