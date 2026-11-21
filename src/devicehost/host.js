@@ -279,6 +279,14 @@ function loadModules() {
 function addDevice(dev) {
   state.devices.set(dev.key, dev);
   dev.changed = true;
+  // Re-apply the user's saved per-device settings (e.g. FURY speed profile) so a
+  // rescan/restart doesn't drop them back to defaults.
+  const saved = state.config.params[dev.key];
+  if (saved && dev.setParam) {
+    for (const [name, value] of Object.entries(saved)) {
+      try { dev.setParam(name, value); } catch { /* ignore */ }
+    }
+  }
 }
 
 function removeDevice(key) {
@@ -363,10 +371,19 @@ function scanHid() {
       try {
         const inst = new PluginInstance(mod, io, hostApi, key);
         inst.initialize();
+        const leds = inst.items().reduce((a, it) => a + it.ledPositions.length, 0);
+        // A tentative (interface-only) match that registers no LEDs is probably the
+        // wrong variant — keep looking for a candidate that actually has LEDs.
+        if (tentative && leds === 0 && matches.indexOf(mod) < matches.length - 1) {
+          reasons.push(`${mod.meta.name}: started but reported 0 LEDs`);
+          inst.shutdown(false);
+          io.hid.close();
+          continue;
+        }
         addDevice(new PluginDevice(inst, io, { product: g.product, manufacturer: g.manufacturer }));
-        log(`Started ${inst.name} using ${path.basename(mod.file)} on endpoint if${eps[0].interface} (${eps[0].usage_page.toString(16)}:${eps[0].usage.toString(16)})`);
+        log(`Started ${inst.name} using ${path.basename(mod.file)} on if${eps[0].interface} (${eps[0].usage_page.toString(16)}:${eps[0].usage.toString(16)}) — ${leds} LEDs`);
         entry.status = inst.failed ? 'failed' : 'active';
-        entry.detail = (inst.failed || `started on if${eps[0].interface}`) + (tentative ? ' (matched by interface, not exact USB ID)' : '');
+        entry.detail = (inst.failed || `started on if${eps[0].interface}, ${leds} LEDs`) + (tentative ? ' (matched by interface, not exact USB ID)' : '');
         started = true;
         break;
       } catch (e) {
