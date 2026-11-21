@@ -417,7 +417,10 @@ class PluginInstance {
     const ch = this.channels.get(id);
     if (!ch) return 0;
     const v = this.host.channelCount(this.key, id);
-    const n = v === undefined || v === null ? ch.dflt : v;
+    // No count configured: use the plugin default, or light the whole header up to
+    // its limit (extra LED data is ignored by the controller) so it works out of the box.
+    let n = v === undefined || v === null ? ch.dflt : v;
+    if ((v === undefined || v === null) && !n) n = Math.min(ch.limit || 40, 120);
     return Math.max(0, Math.min(ch.limit || 1000, n | 0));
   }
 

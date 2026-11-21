@@ -198,7 +198,44 @@ function refreshPluginLibrary() {
   if (!stale) return;
   library.installOfficialPlugins(userDir(), (p) => send('library', p))
     .then(() => { pushConfig(['pluginDirs']); sendState(); })
-    .catch((e) => send('log', { t: Date.now(), role: 'library', msg: `Plugin library download failed: ${e.message}` }));
+    .catch((e) => {
+      send('log', { t: Date.now(), role: 'library', msg: `Plugin library download failed: ${e.message}` });
+      send('library', { task: 'plugins', state: 'error', error: e.message });
+      setTimeout(refreshPluginLibrary, 10 * 60 * 1000);
+    });
+}
+
+// RAM / SMBus access: install the PawnIO driver + modules automatically, then
+// restart the SMBus host so memory is picked up without restarting the app.
+async function ensurePawnIO() {
+  if (process.platform !== 'win32' || settings.get('smbusEnabled') === false) return;
+  const st = library.pawnioStatus(userDir());
+  if (st.driver && st.modules.length) return;
+  if (settings.get('pawnioAutoAttempted') && !st.driver) return; // tried before; Settings has a manual button
+  settings.set('pawnioAutoAttempted', true);
+  const r = await library.installPawnIO(userDir(), (p) => send('library', p));
+  send('log', { t: Date.now(), role: 'pawnio', msg: `PawnIO: driver=${r.driver} (${r.driverResult}), modules=${r.modules.join(',')}` });
+  if (r.driver) devices.restartRole('smbus');
+  sendState();
+}
+
+// Other RGB software holds devices open and fights over them.
+const CONFLICTING = ['SignalRgb.exe', 'SignalRgbLauncher.exe', 'SignalRgbService.exe', 'iCUE.exe', 'Corsair.Service.exe', 'LightingService.exe',
+  'ArmouryCrate.exe', 'ArmouryCrate.Service.exe', 'AuraService.exe', 'OpenRGB.exe', 'NZXT CAM.exe', 'CAM.exe', 'GloriousCore.exe',
+  'Glorious Core.exe', 'MysticLight.exe', 'RGBFusion.exe', 'NGenuity2.exe', 'LGHUB.exe', 'lghub_agent.exe', 'RazerCentralService.exe',
+  'Razer Synapse 3.exe', 'SteelSeriesGG.exe', 'EVGA Unleash RGB.exe', 'EVGA_Unleash.exe'];
+let conflicts = [];
+function checkConflicts() {
+  if (process.platform !== 'win32') return;
+  execFile('tasklist.exe', ['/fo', 'csv', '/nh'], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+    if (err) return;
+    const running = new Set(String(out).split(/\r?\n/).map((l) => (l.split('","')[0] || '').replace(/^"/, '').toLowerCase()));
+    const found = CONFLICTING.filter((n) => running.has(n.toLowerCase()));
+    if (JSON.stringify(found) !== JSON.stringify(conflicts)) {
+      conflicts = found;
+      send('conflicts', conflicts);
+    }
+  });
 }
 
 // ------------------------------------------------------------------ mapping
@@ -280,6 +317,7 @@ function stateSnapshot() {
     officialPlugins: library.officialInfo(userDir()),
     pawnio: library.pawnioStatus(userDir()),
     update: updater.status(),
+    conflicts,
   };
 }
 
@@ -503,7 +541,12 @@ function registerIpc() {
       return { error: e.message };
     }
   });
-  ipcMain.handle('library:install-pawnio', async () => library.installPawnIO(userDir(), (p) => send('library', p)));
+  ipcMain.handle('library:install-pawnio', async () => {
+    const r = await library.installPawnIO(userDir(), (p) => send('library', p));
+    if (r.driver) devices.restartRole('smbus');
+    sendState();
+    return r;
+  });
   ipcMain.handle('fury:autotune', () => devices.autotune());
   ipcMain.handle('diagnostics', () => ({ ...devices.diagnostics(), state: { pluginDirs: pluginDirs(), version: app.getVersion(), os: `${os.type()} ${os.release()}`, motherboard: settings.get('motherboard') } }));
   ipcMain.handle('diagnostics:save', async () => {
@@ -514,6 +557,16 @@ function registerIpc() {
     shell.showItemInFolder(r.filePath);
   });
   ipcMain.handle('update:check', () => updater.check());
+  ipcMain.handle('conflicts:close', async () => {
+    for (const name of conflicts) {
+      await new Promise((r) => execFile('taskkill.exe', ['/IM', name, '/F', '/T'], { windowsHide: true }, () => r()));
+    }
+    // Some of them run as services; stop the common ones too.
+    for (const svc of ['SignalRgbService', 'CorsairService', 'LightingService', 'AuraWallpaperService']) {
+      await new Promise((r) => execFile('sc.exe', ['stop', svc], { windowsHide: true }, () => r()));
+    }
+    setTimeout(() => { checkConflicts(); devices.rescan(); }, 2000);
+  });
   ipcMain.handle('open:external', (_e, url) => {
     if (/^https:\/\/(github\.com|pawnio\.eu|docs\.signalrgb\.com|gitlab\.com|openrgb\.org)\//.test(url)) shell.openExternal(url);
   });
@@ -537,6 +590,9 @@ app.whenReady().then(async () => {
   startDevices();
   detectMotherboard();
   refreshPluginLibrary();
+  ensurePawnIO().catch(() => {});
+  checkConflicts();
+  setInterval(checkConflicts, 30000);
 
   runner = new EffectRunner({ BrowserWindow, preload: path.join(__dirname, 'effect-preload.js'), width: CANVAS_W, height: CANVAS_H, fps: Math.min(60, settings.get('fps') || 60) });
   runner.on('frame', (buf, w, h) => {

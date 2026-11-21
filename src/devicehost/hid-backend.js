@@ -10,9 +10,11 @@ try {
   HID = null;
 }
 
+// Windows names top-level collections &Col01, &Col02 ... (1-based);
+// SignalRGB plugins number them from 0 (0x0000 = first collection).
 function parseCollection(p) {
   const m = /&col([0-9a-f]{2})/i.exec(p || '');
-  return m ? parseInt(m[1], 16) : 0;
+  return m ? Math.max(0, parseInt(m[1], 16) - 1) : 0;
 }
 
 function endpointOf(info) {

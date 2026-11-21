@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('cf', {
   diagnostics: () => invoke('diagnostics'),
   saveDiagnostics: () => invoke('diagnostics:save'),
   checkUpdate: () => invoke('update:check'),
+  closeConflicts: () => invoke('conflicts:close'),
+  onConflicts: on('conflicts'),
   openExternal: (u) => invoke('open:external', u),
   onFrame: on('frame'),
   onStats: on('stats'),

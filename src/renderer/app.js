@@ -618,8 +618,17 @@
     clearTimeout(bannerTimer);
     if (ms) bannerTimer = setTimeout(() => { b.hidden = true; }, ms);
   }
+  function conflictBanner(list) {
+    if (!list || !list.length) return false;
+    showBanner(`Other RGB software is running and holding your devices: ${list.join(', ')}.`, '', 0,
+      [el('button', { class: 'primary', onclick: () => { cf.closeConflicts(); showBanner('Closing other RGB software…', 'info', 5000); } }, 'Close them')]);
+    return true;
+  }
+  cf.onConflicts(conflictBanner);
+
   function startupBanner() {
     if (!S) return;
+    if (conflictBanner(S.conflicts)) return;
     if (!S.officialPlugins.installed && !devices.length) {
       showBanner('Setting up device support…', 'info', 0, [el('button', { class: 'primary', onclick: installPlugins }, 'Download device plugins')]);
     } else if (S.platform === 'win32' && !S.pawnio.driver) {
@@ -628,7 +637,8 @@
   }
   cf.onLibrary((p) => {
     if (p.task === 'plugins' && p.state === 'downloading') showBanner(`Downloading device plugins… ${Math.round((p.progress || 0) * 100)}%`, 'info');
-    if (p.task === 'plugins' && p.state === 'done') showBanner(`Installed ${p.files} device plugins.`, 'info', 6000);
+    if (p.task === 'plugins' && p.state === 'done') showBanner(`Installed ${p.files} device plugins. Scanning for hardware…`, 'info', 6000);
+    if (p.task === 'plugins' && p.state === 'error') showBanner(`Device plugin download failed: ${p.error}. Retrying in 10 minutes.`, '', 0, [el('button', { onclick: installPlugins }, 'Retry now')]);
     if (p.task === 'pawnio') showBanner(`PawnIO: ${p.state}`, 'info', p.state === 'done' ? 6000 : 0);
   });
   cf.onUpdate((u) => {

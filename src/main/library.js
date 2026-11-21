@@ -9,7 +9,12 @@ const { execFile } = require('child_process');
 const tar = require('./tar');
 const { pawnioDllPath } = require('../devicehost/smbus');
 
-const PLUGIN_ARCHIVE = 'https://gitlab.com/api/v4/projects/signalrgb%2Fsignal-plugins/repository/archive.tar.gz?sha=master';
+const PLUGIN_ARCHIVES = [
+  'https://gitlab.com/api/v4/projects/signalrgb%2Fsignal-plugins/repository/archive.tar.gz?sha=master',
+  'https://gitlab.com/signalrgb/signal-plugins/-/archive/master/signal-plugins-master.tar.gz',
+];
+const PLUGIN_ARCHIVE = PLUGIN_ARCHIVES[0];
+const UA = 'Cuttlefish/1.0 (+https://github.com/Coral-coder/Cuttlefish)';
 const PAWNIO_MODULES_API = 'https://api.github.com/repos/namazso/PawnIO.Modules/releases/latest';
 const MODULE_FILES = ['SmbusI801.bin', 'SmbusPIIX4.bin'];
 
@@ -25,18 +30,42 @@ function officialInfo(userDir) {
   }
 }
 
-// Prefer Electron's network stack (honours system proxy settings) when available.
-function httpFetch(url, opts) {
+// Some hosts reject one network stack or another (GitLab answers Chromium's
+// default request with 406), so try Node's fetch first, then Electron's net
+// stack (which honours system proxy settings).
+function fetchers() {
+  const list = [(u, o) => fetch(u, o)];
   try {
     const { net } = require('electron');
-    if (net && typeof net.fetch === 'function') return net.fetch(url, opts);
+    if (net && typeof net.fetch === 'function') list.push((u, o) => net.fetch(u, o));
   } catch { /* plain Node */ }
-  return fetch(url, opts);
+  return list;
+}
+
+async function httpFetch(url, opts) {
+  let last = null;
+  for (const f of fetchers()) {
+    try {
+      const res = await f(url, opts);
+      if (res.ok) return res;
+      last = new Error(`HTTP ${res.status} from ${url}`);
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last || new Error(`Download failed: ${url}`);
+}
+
+async function downloadAny(urls, onProgress) {
+  let last = null;
+  for (const u of urls) {
+    try { return await download(u, onProgress); } catch (e) { last = e; }
+  }
+  throw last;
 }
 
 async function download(url, onProgress) {
-  const res = await httpFetch(url, { headers: { 'User-Agent': 'Cuttlefish-RGB' } });
-  if (!res.ok) throw new Error(`Download failed (${res.status}) ${url}`);
+  const res = await httpFetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' } });
   const total = Number(res.headers.get('content-length')) || 0;
   const chunks = [];
   let got = 0;
@@ -48,22 +77,86 @@ async function download(url, onProgress) {
   return Buffer.concat(chunks);
 }
 
+const REPO_API = 'https://gitlab.com/api/v4/projects/signalrgb%2Fsignal-plugins/repository';
+const RAW_BASE = 'https://gitlab.com/signalrgb/signal-plugins/-/raw/master/';
+
+function pluginPathFilter(rel) {
+  if (/\.(test|spec)\.js$/i.test(rel) || /(^|\/)tests?\//i.test(rel)) return null;
+  return /\.(js|json)$/i.test(rel) ? rel : null;
+}
+
+// Fallback when archive downloads are refused: list the tree, fetch files one by one.
+async function fetchPluginFilesIndividually(dest, p) {
+  const files = [];
+  let url = `${REPO_API}/tree?path=Plugins&recursive=true&per_page=100&pagination=keyset&order_by=path&sort=asc`;
+  while (url) {
+    const res = await httpFetch(url, { headers: { 'User-Agent': UA } });
+    for (const e of await res.json()) {
+      if (e.type === 'blob' && e.path.startsWith('Plugins/')) {
+        const rel = pluginPathFilter(e.path.slice('Plugins/'.length));
+        if (rel) files.push({ path: e.path, rel });
+      }
+    }
+    const link = res.headers.get('link') || '';
+    const m = /<([^>]+)>;\s*rel="next"/.exec(link);
+    url = m ? m[1] : null;
+  }
+  let done = 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function getOne(f) {
+    const urls = [RAW_BASE + f.path.split('/').map(encodeURIComponent).join('/'),
+      `${REPO_API}/files/${encodeURIComponent(f.path)}/raw?ref=master`];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      for (const u of urls) {
+        try {
+          const res = await httpFetch(u, { headers: { 'User-Agent': UA } });
+          const buf = Buffer.from(await res.arrayBuffer());
+          const target = path.join(dest, f.rel);
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, buf);
+          return true;
+        } catch { /* try next */ }
+      }
+      await sleep(1000 * (attempt + 1)); // rate limited / transient
+    }
+    return false;
+  }
+  const queue = files.slice();
+  let ok = 0;
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (queue.length) {
+      const f = queue.shift();
+      if (await getOne(f)) ok++;
+      done++;
+      p({ task: 'plugins', state: 'downloading', progress: done / files.length });
+    }
+  }));
+  if (!ok) throw new Error('Could not download any plugin files');
+  return ok;
+}
+
 async function installOfficialPlugins(userDir, progress) {
   const p = progress || (() => {});
   p({ task: 'plugins', state: 'downloading' });
-  const buf = await download(PLUGIN_ARCHIVE, (f) => p({ task: 'plugins', state: 'downloading', progress: f }));
   const dest = officialPluginDir(userDir);
   const tmp = `${dest}.tmp`;
   fs.rmSync(tmp, { recursive: true, force: true });
   fs.mkdirSync(tmp, { recursive: true });
-  p({ task: 'plugins', state: 'extracting' });
-  const n = tar.extract(buf, tmp, (name) => {
-    const m = /^[^/]+\/Plugins\/(.+)$/.exec(name);
-    if (!m) return null;
-    if (/\.(test|spec)\.js$/i.test(m[1]) || /(^|\/)tests?\//i.test(m[1])) return null;
-    return /\.(js|json|png|jpg)$/i.test(m[1]) ? m[1] : null;
-  });
-  fs.writeFileSync(path.join(tmp, '.cuttlefish.json'), JSON.stringify({ installed: true, files: n, date: new Date().toISOString(), source: PLUGIN_ARCHIVE }));
+  let n = 0;
+  let method = 'archive';
+  try {
+    const buf = await downloadAny(PLUGIN_ARCHIVES, (f) => p({ task: 'plugins', state: 'downloading', progress: f }));
+    p({ task: 'plugins', state: 'extracting' });
+    n = tar.extract(buf, tmp, (name) => {
+      const m = /^[^/]+\/Plugins\/(.+)$/.exec(name);
+      return m ? pluginPathFilter(m[1]) : null;
+    });
+  } catch (e) {
+    method = 'files';
+    p({ task: 'plugins', state: 'downloading', progress: 0, note: `archive refused (${e.message}); fetching files individually` });
+    n = await fetchPluginFilesIndividually(tmp, p);
+  }
+  fs.writeFileSync(path.join(tmp, '.cuttlefish.json'), JSON.stringify({ installed: true, files: n, date: new Date().toISOString(), source: PLUGIN_ARCHIVE, method }));
   fs.rmSync(dest, { recursive: true, force: true });
   fs.renameSync(tmp, dest);
   p({ task: 'plugins', state: 'done', files: n });
@@ -111,7 +204,7 @@ function pawnioStatus(userDir) {
 }
 
 async function installModules(userDir, progress) {
-  const rel = await (await httpFetch(PAWNIO_MODULES_API, { headers: { 'User-Agent': 'Cuttlefish-RGB', Accept: 'application/vnd.github+json' } })).json();
+  const rel = await (await httpFetch(PAWNIO_MODULES_API, { headers: { 'User-Agent': UA, Accept: 'application/vnd.github+json' } })).json();
   const dir = moduleDir(userDir);
   fs.mkdirSync(dir, { recursive: true });
   let found = 0;
@@ -145,7 +238,21 @@ function installPawnIO(userDir, progress) {
     if (pawnioDllPath()) return finish('already-installed');
     p({ task: 'pawnio', state: 'installing driver (winget)' });
     execFile('winget', ['install', '--id', 'namazso.PawnIO', '-e', '--silent', '--accept-source-agreements', '--accept-package-agreements'],
-      { windowsHide: true, timeout: 10 * 60 * 1000 }, (err) => finish(err ? `winget failed: ${err.message}` : 'installed'));
+      { windowsHide: true, timeout: 10 * 60 * 1000 }, async (err) => {
+        if (!err && pawnioDllPath()) return finish('installed (winget)');
+        // Fallback: official installer from the PawnIO.Setup GitHub releases.
+        try {
+          p({ task: 'pawnio', state: 'downloading PawnIO installer' });
+          const buf = await download('https://github.com/namazso/PawnIO.Setup/releases/latest/download/PawnIO_setup.exe');
+          const exe = path.join(userDir, 'PawnIO_setup.exe');
+          fs.writeFileSync(exe, buf);
+          p({ task: 'pawnio', state: 'installing driver' });
+          execFile(exe, ['-install', '-silent'], { windowsHide: true, timeout: 5 * 60 * 1000 }, (e2) =>
+            finish(pawnioDllPath() ? 'installed (setup)' : `install failed: ${(e2 || err || {}).message || 'unknown'}`));
+        } catch (e) {
+          finish(`install failed: ${e.message}`);
+        }
+      });
   });
 }
 

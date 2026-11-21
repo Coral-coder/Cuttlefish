@@ -136,6 +136,15 @@ class DeviceManager extends EventEmitter {
     this.broadcast({ type: 'rescan' });
   }
 
+  restartRole(role) {
+    const h = this.hosts[role];
+    if (h) {
+      try { h.kill(); } catch { /* respawned by exit handler */ }
+    } else if (!this.stopping) {
+      this._spawn(role);
+    }
+  }
+
   autotune() {
     if (this.hosts.smbus) this.hosts.smbus.postMessage({ type: 'fury-autotune' });
   }
