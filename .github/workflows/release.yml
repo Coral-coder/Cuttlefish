@@ -48,6 +48,15 @@ jobs:
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Create version tag
+        if: steps.exists.outputs.released == 'false'
+        shell: bash
+        run: |
+          tag="v${{ steps.v.outputs.version }}"
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            git tag "$tag"
+            git push origin "$tag"
+          fi
       - run: npm ci
       - name: Bundle PawnIO SMBus modules
         shell: pwsh
