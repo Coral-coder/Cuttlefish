@@ -114,22 +114,27 @@ function bitsFor(count) {
 }
 
 // Colour shown on LED `index` (global index) for a mapping pattern.
-// pattern: { kind: 'off' | 'full' | 'bit' | 'single', bit, inv, index }
+// pattern: { kind: 'off' | 'full' | 'bit' | 'single' | 'device', bit, inv, index,
+//            level (0-255, default 255), mod + phase (sparse: only ids with id % mod === phase light) }
 function mappingColor(pattern, index) {
   if (!pattern) return [0, 0, 0];
+  const v = pattern.level === undefined ? 255 : Math.max(0, Math.min(255, pattern.level | 0));
+  const W = [v, v, v];
+  const K = [0, 0, 0];
+  if (pattern.mod > 1 && index % pattern.mod !== pattern.phase) return K;
   switch (pattern.kind) {
     case 'full':
-      return [255, 255, 255];
+      return W;
     case 'single':
-      return index === pattern.index ? [255, 255, 255] : [0, 0, 0];
+      return index === pattern.index ? W : K;
     case 'device':
-      return index >= pattern.start && index < pattern.end ? [255, 255, 255] : [0, 0, 0];
+      return index >= pattern.start && index < pattern.end ? W : K;
     case 'bit': {
       const on = ((toGray(index) >>> pattern.bit) & 1) === 1;
-      return on !== !!pattern.inv ? [255, 255, 255] : [0, 0, 0];
+      return on !== !!pattern.inv ? W : K;
     }
     default:
-      return [0, 0, 0];
+      return K;
   }
 }
 

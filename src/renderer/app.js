@@ -639,6 +639,7 @@
     if (p.task === 'plugins' && p.state === 'downloading') showBanner(`Downloading device plugins… ${Math.round((p.progress || 0) * 100)}%`, 'info');
     if (p.task === 'plugins' && p.state === 'done') showBanner(`Installed ${p.files} device plugins. Scanning for hardware…`, 'info', 6000);
     if (p.task === 'plugins' && p.state === 'error') showBanner(`Device plugin download failed: ${p.error}. Retrying in 10 minutes.`, '', 0, [el('button', { onclick: installPlugins }, 'Retry now')]);
+    if (p.task === 'effects' && p.state === 'added') showBanner(`New effects synced: ${p.titles.slice(0, 5).join(', ')}${p.titles.length > 5 ? ` and ${p.titles.length - 5} more` : ''}`, 'info', 8000);
     if (p.task === 'pawnio') showBanner(`PawnIO: ${p.state}`, 'info', p.state === 'done' ? 6000 : 0);
   });
   cf.onUpdate((u) => {

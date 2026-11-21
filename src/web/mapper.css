@@ -24,3 +24,4 @@ video,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:conta
 table{width:100%;border-collapse:collapse;font-size:14px}
 td{padding:4px 0;border-bottom:1px solid #1e2835}
 td:last-child{text-align:right;color:var(--muted)}
+select{font:inherit;color:var(--text);background:#0e141b;border:1px solid #223042;border-radius:8px;padding:6px;flex:1}

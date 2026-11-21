@@ -166,7 +166,7 @@ class MappingServer extends EventEmitter {
         break;
       case 'preview':
         // Light everything (or nothing) so the user can frame the shot.
-        this.emit('pattern', m.on ? { kind: 'full' } : { kind: 'off' });
+        this.emit('pattern', m.on ? { kind: 'full', level: Math.round((Math.max(5, Math.min(100, Number(m.level) || 40)) / 100) * 255) } : { kind: 'off' });
         break;
       case 'preview-end':
         if (!this.session) this.emit('pattern', null);
@@ -189,14 +189,23 @@ class MappingServer extends EventEmitter {
       return;
     }
     const bits = bitsFor(Math.max(2, layout.total));
-    const steps = [{ kind: 'off' }, { kind: 'full' }];
-    for (let b = 0; b < bits; b++) {
-      steps.push({ kind: 'bit', bit: b, inv: false });
-      steps.push({ kind: 'bit', bit: b, inv: true });
+    // Lower brightness = less bloom and fewer wall reflections; precise mode lights only
+    // every Kth LED at a time so reflections of neighbouring LEDs can't mix into codes.
+    const level = Math.round((Math.max(5, Math.min(100, Number(m.level) || 40)) / 100) * 255);
+    const mode = m.mode === 'fast' ? 'fast' : 'precise';
+    const groups = mode === 'precise' ? Math.min(4, Math.max(1, layout.total)) : 1;
+    const steps = [{ kind: 'off' }];
+    for (let phase = 0; phase < groups; phase++) {
+      const sparse = groups > 1 ? { mod: groups, phase } : {};
+      steps.push({ kind: 'full', level, ...sparse });
+      for (let b = 0; b < bits; b++) {
+        steps.push({ kind: 'bit', bit: b, inv: false, level, ...sparse });
+        steps.push({ kind: 'bit', bit: b, inv: true, level, ...sparse });
+      }
     }
     this.session = { ws, steps, step: -1, total: layout.total, bits, status: 'running', settle: Number(m.settleMs) || this.settleMs };
     this.emit('session', { active: true, layout });
-    this._broadcast({ type: 'session', total: layout.total, bits, steps: steps.length });
+    this._broadcast({ type: 'session', total: layout.total, bits, steps: steps.length, mode });
     this._next();
   }
 

@@ -30,6 +30,8 @@
       <button id="btnFrame">Light all LEDs</button>
       <button id="btnMap" class="primary">Map LEDs</button>
     </div>
+    <label class="row small"><span>Mode</span><select id="mode"><option value="precise" selected>Precise (reflective / white case)</option><option value="fast">Fast</option></select></label>
+    <label class="row small"><span>LED brightness</span><input id="level" type="range" min="5" max="100" step="5" value="35"><output id="levelOut">35%</output></label>
     <label class="row small"><span>Settle time</span><input id="settle" type="range" min="120" max="900" step="30" value="300"><output id="settleOut">300 ms</output></label>
     <p class="hint" id="status">Connecting…</p>
     <div id="result" class="card" hidden></div>

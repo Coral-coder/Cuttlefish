@@ -4,43 +4,35 @@
 // Input
 //   items:   [{ key, size:[w,h], ledPositions:[[gx,gy],...] }]
 //   offsets: { itemKey: globalStartIndex }
-//   points:  [{ id: globalLedIndex, x, y }] in camera pixels
-//   camera:  { width, height }
+//   points:  [{ id: globalLedIndex, x, y, cands?: [{ x, y, w }] }] in camera pixels.
+//            `cands` are alternative blobs that decoded to the same LED (the real LED
+//            plus reflections on a white/reflective case); x,y is the brightest.
 // Output
-//   { placements: { key: placement }, report: [{ key, detected, total, error }] }
+//   { placements: { key: placement }, report: [{ key, detected, rejected, total, error }] }
 //
-// Each item gets a similarity transform (scale + rotation + translation, with
-// optional mirror) fitted by least squares (2D Umeyama), so LEDs the camera
-// missed are still placed sensibly; LEDs it did see get exact per-LED overrides.
+// Per device we run RANSAC over similarity transforms (scale + rotation +
+// translation, optionally mirrored): random pairs of LEDs propose a transform,
+// and the hypothesis that explains the most LEDs (choosing, for each LED, the
+// candidate blob closest to where the device's geometry says it should be) wins.
+// Reflections don't fit the device's shape, so they are rejected. The winning
+// transform places LEDs the camera missed; LEDs that fit get exact positions.
 
 const { CANVAS_W, CANVAS_H, placementFromTransform } = require('./layout');
 
-function percentile(arr, q) {
-  const s = [...arr].sort((a, b) => a - b);
-  if (!s.length) return 0;
-  const i = Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))));
-  return s[i];
-}
-
-// Map camera coordinates to the canvas, preserving aspect ratio, with margin.
-function cameraToCanvasFn(points, margin = 0.06) {
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  const x0 = percentile(xs, 0.0);
-  const x1 = percentile(xs, 1.0);
-  const y0 = percentile(ys, 0.0);
-  const y1 = percentile(ys, 1.0);
-  const bw = Math.max(1e-6, x1 - x0);
-  const bh = Math.max(1e-6, y1 - y0);
-  const k = Math.min((CANVAS_W * (1 - 2 * margin)) / bw, (CANVAS_H * (1 - 2 * margin)) / bh);
-  const ox = (CANVAS_W - bw * k) / 2 - x0 * k;
-  const oy = (CANVAS_H - bh * k) / 2 - y0 * k;
-  return { k, map: (x, y) => [x * k + ox, y * k + oy] };
+function rng(seed) {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s ^= s << 13; s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5; s >>>= 0;
+    return s / 4294967296;
+  };
 }
 
 // Least-squares similarity fit dst ≈ s R src + t. Returns { s, theta, tx, ty, err }.
 function fitSimilarity(src, dst) {
   const n = src.length;
+  if (n < 2) return null;
   let mx = 0, my = 0, nx = 0, ny = 0;
   for (let i = 0; i < n; i++) {
     mx += src[i][0]; my += src[i][1];
@@ -63,80 +55,161 @@ function fitSimilarity(src, dst) {
   const ty = ny - s * (sn * mx + c * my);
   let err = 0;
   for (let i = 0; i < n; i++) {
-    const px = s * (c * src[i][0] - sn * src[i][1]) + tx;
-    const py = s * (sn * src[i][0] + c * src[i][1]) + ty;
-    err += (px - dst[i][0]) ** 2 + (py - dst[i][1]) ** 2;
+    const p = apply({ s, theta, tx, ty }, src[i]);
+    err += (p[0] - dst[i][0]) ** 2 + (p[1] - dst[i][1]) ** 2;
   }
   return { s, theta, tx, ty, err: Math.sqrt(err / n) };
 }
 
-function solve({ items, offsets, points, existing }) {
+function apply(f, p) {
+  const c = Math.cos(f.theta), sn = Math.sin(f.theta);
+  return [f.s * (c * p[0] - sn * p[1]) + f.tx, f.s * (sn * p[0] + c * p[1]) + f.ty];
+}
+
+function nearest(cands, p) {
+  let best = null;
+  let bd = Infinity;
+  for (const c of cands) {
+    const d = Math.hypot(c.x - p[0], c.y - p[1]);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return { cand: best, d: bd };
+}
+
+// obs: [{ i, src:[x,y], srcFlip:[x,y], cands:[{x,y,w}] }]
+function ransacItem(obs, random, typicalSpacing) {
+  if (obs.length === 0) return null;
+  if (obs.length === 1) return { single: true, inliers: [{ i: obs[0].i, p: [obs[0].cands[0].x, obs[0].cands[0].y] }] };
+  const pick = (o) => (random() < 0.7 || o.cands.length === 1 ? o.cands[0] : o.cands[1 + Math.floor(random() * (o.cands.length - 1))]);
+  let best = null;
+  const iters = Math.min(600, Math.max(60, obs.length * 12));
+  for (let it = 0; it < iters; it++) {
+    const a = obs[Math.floor(random() * obs.length)];
+    let b = obs[Math.floor(random() * obs.length)];
+    if (a === b) b = obs[(obs.indexOf(a) + 1) % obs.length];
+    const ca = pick(a);
+    const cb = pick(b);
+    for (const flip of [false, true]) {
+      const key = flip ? 'srcFlip' : 'src';
+      const f = fitSimilarity([a[key], b[key]], [[ca.x, ca.y], [cb.x, cb.y]]);
+      if (!f || !(f.s > 0.3) || f.s > typicalSpacing * 50) continue;
+      const thr = Math.max(2, 0.6 * f.s);
+      let count = 0;
+      let res = 0;
+      for (const o of obs) {
+        const { d } = nearest(o.cands, apply(f, o[key]));
+        if (d < thr) { count++; res += d; }
+      }
+      if (!best || count > best.count || (count === best.count && res < best.res)) best = { f, flip, count, res };
+    }
+  }
+  if (!best || best.count < 2) {
+    // Nothing consistent: fall back to the brightest blob of each LED.
+    return { fallback: true, inliers: obs.map((o) => ({ i: o.i, p: [o.cands[0].x, o.cands[0].y] })) };
+  }
+  // Refine: least squares on inliers, then re-select inliers (twice).
+  let f = best.f;
+  const key = best.flip ? 'srcFlip' : 'src';
+  let inl = [];
+  for (let round = 0; round < 3; round++) {
+    const thr = Math.max(2, 0.6 * f.s);
+    inl = [];
+    for (const o of obs) {
+      const { cand, d } = nearest(o.cands, apply(f, o[key]));
+      if (d < thr) inl.push({ o, p: [cand.x, cand.y] });
+    }
+    if (inl.length < 2) break;
+    const g = fitSimilarity(inl.map((x) => x.o[key]), inl.map((x) => x.p));
+    if (!g) break;
+    f = g;
+  }
+  return { f, flip: best.flip, inliers: inl.map((x) => ({ i: x.o.i, p: x.p })), rejected: obs.length - inl.length };
+}
+
+function solve({ items, offsets, points, existing, seed }) {
   const placements = {};
   const report = [];
-  const valid = points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-  if (!valid.length) return { placements, report, error: 'No LEDs were detected' };
-  const cam = cameraToCanvasFn(valid);
+  const random = rng(seed || 12345);
   const byId = new Map();
-  for (const p of valid) byId.set(p.id, p);
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    const cands = (p.cands && p.cands.length ? p.cands : [{ x: p.x, y: p.y, w: 1 }]).filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y));
+    if (cands.length) byId.set(p.id, cands);
+  }
+  if (!byId.size) return { placements, report, error: 'No LEDs were detected' };
 
+  // Pass 1: robust per-item fits in camera space.
+  const fits = [];
   for (const item of items) {
     const start = offsets[item.key];
     if (start === undefined) continue;
-    const [w, h] = item.size;
-    const src = [];
-    const srcFlip = [];
-    const dst = [];
-    const leds = {};
+    const [w] = item.size;
+    const obs = [];
     item.ledPositions.forEach((g, i) => {
-      const p = byId.get(start + i);
-      if (!p) return;
-      const c = cam.map(p.x, p.y);
-      // grid cell centres expressed relative to the grid origin (placementFromTransform convention)
-      src.push([g[0] + 0.5, g[1] + 0.5]);
-      srcFlip.push([w - (g[0] + 0.5), g[1] + 0.5]);
-      dst.push(c);
-      leds[i] = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
+      const cands = byId.get(start + i);
+      if (!cands) return;
+      obs.push({ i, src: [g[0] + 0.5, g[1] + 0.5], srcFlip: [w - (g[0] + 0.5), g[1] + 0.5], cands });
     });
-    const total = item.ledPositions.length;
-    if (!dst.length) {
-      report.push({ key: item.key, detected: 0, total });
+    // rough LED spacing in camera pixels, used to bound absurd hypotheses
+    const all = obs.map((o) => o.cands[0]);
+    const span = all.length > 1 ? Math.hypot(Math.max(...all.map((c) => c.x)) - Math.min(...all.map((c) => c.x)), Math.max(...all.map((c) => c.y)) - Math.min(...all.map((c) => c.y))) : 100;
+    const r = ransacItem(obs, random, Math.max(10, span));
+    fits.push({ item, r, total: item.ledPositions.length });
+  }
+
+  // Camera -> canvas: fit the inlier LEDs (not reflections) into the canvas with a margin.
+  const inlierPts = fits.flatMap((x) => (x.r ? x.r.inliers.map((q) => q.p) : []));
+  if (!inlierPts.length) return { placements, report, error: 'No LEDs were detected' };
+  const xs = inlierPts.map((p) => p[0]);
+  const ys = inlierPts.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const margin = 0.06;
+  const k = Math.min((CANVAS_W * (1 - 2 * margin)) / Math.max(1e-6, x1 - x0), (CANVAS_H * (1 - 2 * margin)) / Math.max(1e-6, y1 - y0));
+  const ox = (CANVAS_W - (x1 - x0) * k) / 2 - x0 * k;
+  const oy = (CANVAS_H - (y1 - y0) * k) / 2 - y0 * k;
+  const toCanvas = (p) => [p[0] * k + ox, p[1] * k + oy];
+
+  for (const { item, r, total } of fits) {
+    if (!r) {
+      report.push({ key: item.key, detected: 0, rejected: 0, total });
       continue;
     }
-    let placement = null;
+    const [w, h] = item.size;
+    const leds = {};
+    for (const q of r.inliers) {
+      const c = toCanvas(q.p);
+      leds[q.i] = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
+    }
+    let placement;
     let err = 0;
-    const f1 = fitSimilarity(src, dst);
-    const f2 = fitSimilarity(srcFlip, dst);
-    if (f1 || f2) {
-      const useFlip = f2 && (!f1 || f2.err < f1.err * 0.8);
-      const f = useFlip ? f2 : f1;
-      err = f.err;
-      // src was expressed with origin at grid corner; placementFromTransform wants the
-      // transform of grid coordinates relative to that same corner (with flip applied
-      // about the vertical centre line) -> for the flipped fit the corner is at x=w.
-      if (useFlip) {
-        // canvas = s R (w - gx, gy) + t ; rewrite as s R F (gx - w/2, ...) about centre
-        placement = placementFromTransform(w, h, f.s, f.theta, true, f.tx + 0, f.ty + 0);
-        // placementFromTransform assumes canvas = sR F g + t with F mirroring about the
-        // grid centre; mirroring about x=w/2 maps g.x -> w - g.x which is what we fitted.
-        const c = Math.cos(f.theta), sn = Math.sin(f.theta);
-        const cx = f.s * (c * (w / 2) - sn * (h / 2)) + f.tx;
-        const cy = f.s * (sn * (w / 2) + c * (h / 2)) + f.ty;
-        placement.x = cx - (w * f.s) / 2;
-        placement.y = cy - (h * f.s) / 2;
+    if (r.f) {
+      const s = r.f.s * k;
+      const tx = r.f.tx * k + ox;
+      const ty = r.f.ty * k + oy;
+      err = r.f.err * k;
+      if (r.flip) {
+        // canvas = s R (w - gx, gy) + t  ==  centre + s R F (g - [w/2,h/2])
+        const c = Math.cos(r.f.theta), sn = Math.sin(r.f.theta);
+        const cx = s * (c * (w / 2) - sn * (h / 2)) + tx;
+        const cy = s * (sn * (w / 2) + c * (h / 2)) + ty;
+        placement = { x: cx - (w * s) / 2, y: cy - (h * s) / 2, scale: s, rotation: (r.f.theta * 180) / Math.PI, flip: true };
       } else {
-        placement = placementFromTransform(w, h, f.s, f.theta, false, f.tx, f.ty);
+        placement = placementFromTransform(w, h, s, r.f.theta, false, tx, ty);
       }
     } else {
-      // Single LED (or all at one spot): keep scale/rotation, move it there.
+      // Single LED (or nothing consistent): keep scale/rotation, centre on the observations.
       const prev = (existing && existing[item.key]) || { scale: 10, rotation: 0, flip: false };
       const s = prev.scale || 10;
-      placement = { x: dst[0][0] - (w * s) / 2, y: dst[0][1] - (h * s) / 2, scale: s, rotation: prev.rotation || 0, flip: !!prev.flip };
+      const pts = Object.values(leds);
+      const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+      const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+      placement = { x: cx - (w * s) / 2, y: cy - (h * s) / 2, scale: s, rotation: prev.rotation || 0, flip: !!prev.flip };
     }
     placement.leds = leds;
     placements[item.key] = placement;
-    report.push({ key: item.key, detected: dst.length, total, error: Math.round(err * 100) / 100 });
+    report.push({ key: item.key, detected: r.inliers.length, rejected: r.rejected || 0, total, error: Math.round(err * 100) / 100 });
   }
-  return { placements, report, scale: cam.k };
+  return { placements, report, scale: k };
 }
 
-module.exports = { solve, fitSimilarity, cameraToCanvasFn };
+module.exports = { solve, fitSimilarity, ransacItem };

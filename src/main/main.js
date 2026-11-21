@@ -90,6 +90,33 @@ function effectDirs() {
   return dirs;
 }
 
+// Live sync: effects downloaded through SignalRGB's store (or dropped into any
+// effect folder) appear in Cuttlefish immediately.
+const watchers = new Map();
+let watchTimer = null;
+function watchEffectFolders() {
+  const want = new Set(effectDirs().map((d) => d.dir).filter((d) => fs.existsSync(d)));
+  for (const [dir, w] of watchers) if (!want.has(dir)) { w.close(); watchers.delete(dir); }
+  for (const dir of want) {
+    if (watchers.has(dir)) continue;
+    try {
+      const w = fs.watch(dir, { recursive: process.platform === 'win32' || process.platform === 'darwin' }, (_ev, file) => {
+        if (file && !/\.html?$/i.test(String(file))) return;
+        clearTimeout(watchTimer);
+        watchTimer = setTimeout(() => {
+          const before = new Set(effects.map((e) => e.id));
+          reloadEffects();
+          const added = effects.filter((e) => !before.has(e.id));
+          if (added.length) send('library', { task: 'effects', state: 'added', titles: added.map((e) => e.title) });
+          sendState();
+        }, 1500);
+      });
+      w.on('error', () => { watchers.delete(dir); });
+      watchers.set(dir, w);
+    } catch { /* folder not watchable */ }
+  }
+}
+
 function reloadEffects() {
   fs.mkdirSync(path.join(userDir(), 'effects'), { recursive: true });
   effects = scanEffects(effectDirs());
@@ -586,6 +613,8 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(permission === 'media' || permission === 'display-capture'));
 
   reloadEffects();
+  watchEffectFolders();
+  setInterval(watchEffectFolders, 60000);
   startDevices();
   detectMotherboard();
   refreshPluginLibrary();

@@ -58,3 +58,43 @@ test('solver handles partially visible devices', () => {
   assert.strictEqual(Object.keys(p.leds).length, 3);
   assert.ok(Math.abs(p.rotation) < 1e-6 || Math.abs(Math.abs(p.rotation) - 180) < 1e-6);
 });
+
+test('solver rejects reflections on a white case', () => {
+  const items = [
+    { key: 'strip', size: [20, 1], ledPositions: strip(20) },
+    { key: 'ram', size: [1, 12], ledPositions: Array.from({ length: 12 }, (_, i) => [0, 11 - i]) },
+  ];
+  const offsets = { strip: 0, ram: 20 };
+  const truthCam = (id) => (id < 20 ? [100 + id * 15, 400] : [500, 380 - (id - 20) * 14]);
+  let seed = 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const points = [];
+  for (let id = 0; id < 32; id++) {
+    const [x, y] = truthCam(id);
+    const cands = [{ x, y, w: 1 }];
+    // a mirror reflection on the case floor/wall, sometimes BRIGHTER than the LED
+    cands.push({ x: x + 40 * (rand() - 0.5), y: 760 - y, w: rand() < 0.4 ? 2 : 0.5 });
+    // random glow blob on the white panel
+    if (rand() < 0.5) cands.push({ x: rand() * 800, y: rand() * 600, w: 0.4 });
+    cands.sort((a, b) => b.w - a.w);
+    points.push({ id, x: cands[0].x, y: cands[0].y, cands });
+  }
+  const res = solve({ items, offsets, points });
+  for (const r of res.report) assert.ok(r.detected >= r.total - 1, `${r.key}: ${r.detected}/${r.total}`);
+  // every accepted LED override must be the real LED, not a reflection
+  const k = res.scale;
+  for (const it of items) {
+    const p = res.placements[it.key];
+    for (const [i, pt] of Object.entries(p.leds)) {
+      const id = offsets[it.key] + Number(i);
+      const t = truthCam(id);
+      const ref = truthCam(offsets.strip === 0 && id < 20 ? 0 : 20);
+      const refPt = res.placements[id < 20 ? 'strip' : 'ram'].leds[0];
+      if (!refPt) continue;
+      const dExp = Math.hypot(t[0] - ref[0], t[1] - ref[1]) * k;
+      const dGot = Math.hypot(pt[0] - refPt[0], pt[1] - refPt[1]);
+      assert.ok(Math.abs(dExp - dGot) < 1, `${it.key}[${i}] off by ${Math.abs(dExp - dGot)}`);
+    }
+    assert.strictEqual(Math.round(Math.abs(p.rotation) % 180), it.key === 'strip' ? 0 : 0);
+  }
+});
