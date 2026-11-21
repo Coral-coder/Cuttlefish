@@ -12,6 +12,8 @@ const { solve } = require('../shared/solver');
 const { CANVAS_W, CANVAS_H } = require('../shared/layout');
 const updater = require('./updater');
 const library = require('./library');
+const srgbImport = require('./signalrgb-import');
+const { SignalRGBAccount } = require('./signalrgb-account');
 
 const ROOT = path.join(__dirname, '..', '..');
 const BUILTIN_EFFECTS = app.isPackaged ? path.join(process.resourcesPath, 'effects') : path.join(ROOT, 'effects');
@@ -40,6 +42,20 @@ let quitting = false;
 let previewCounter = 0;
 let lastDevicesSent = 0;
 const userDir = () => app.getPath('userData');
+let account = null;
+
+function accountClient() {
+  if (!account) {
+    account = new SignalRGBAccount({
+      config: settings.get('signalrgbConfig') || {},
+      effectsDir: path.join(userDir(), 'effects'),
+      cacheFile: path.join(userDir(), 'signalrgb-auth.json'),
+    });
+    account.on('log', (m) => send('log', { t: Date.now(), role: 'signalrgb', msg: m }));
+    account.on('auth', () => sendState());
+  }
+  return account;
+}
 
 // ------------------------------------------------------------------ folders
 function signalRgbPluginDirs() {
@@ -348,6 +364,7 @@ function stateSnapshot() {
     pawnio: library.pawnioStatus(userDir()),
     update: updater.status(),
     conflicts,
+    signalrgb: { imported: settings.get('signalrgbImported'), account: accountClient().status() },
   };
 }
 
@@ -587,6 +604,58 @@ function registerIpc() {
     shell.showItemInFolder(r.filePath);
   });
   ipcMain.handle('update:check', () => updater.check());
+  ipcMain.handle('srgb:detect', () => srgbImport.detect());
+  ipcMain.handle('srgb:import', () => {
+    const d = srgbImport.detect();
+    // Add discovered plugin & effect folders as Cuttlefish sources.
+    const addDirs = (key, dirs) => {
+      const cur = new Set(settings.get(key) || []);
+      for (const dir of dirs) cur.add(dir);
+      settings.set(key, [...cur]);
+    };
+    addDirs('pluginDirs', d.pluginDirs);
+    addDirs('effectDirs', d.effectDirs);
+    if (d.firebase && d.firebase.config && d.firebase.config.apiKey) {
+      settings.set('signalrgbConfig', d.firebase.config);
+      account = null; // rebuild with new config
+    }
+    const s = srgbImport.importSettings(d.settingsFiles);
+    if (typeof s.brightness === 'number') { settings.set('brightness', Math.max(0, Math.min(1, s.brightness))); pushConfig(['brightness']); }
+    settings.set('signalrgbImported', true);
+    pushConfig(['pluginDirs']);
+    reloadEffects();
+    watchEffectFolders();
+    devices.rescan();
+    sendState();
+    return {
+      installRoots: d.installRoots, dataRoots: d.dataRoots,
+      pluginDirs: d.pluginDirs.length, effectDirs: d.effectDirs.length,
+      settings: d.settingsFiles.length, firebase: !!(d.firebase && d.firebase.haveApiKey),
+      firebaseSource: d.firebase && d.firebase.source,
+    };
+  });
+  ipcMain.handle('srgb:status', () => accountClient().status());
+  ipcMain.handle('srgb:signin', async (_e, email, password) => {
+    try { return { ok: true, ...(await accountClient().signIn(email, password)) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('srgb:signout', () => { accountClient().signOut(); return true; });
+  ipcMain.handle('srgb:library', async () => {
+    try { return { items: await accountClient().library() }; }
+    catch (e) { return { error: e.message }; }
+  });
+  ipcMain.handle('srgb:sync', async () => {
+    try {
+      const r = await accountClient().sync((p) => send('library', { task: 'srgb-sync', ...p }));
+      reloadEffects();
+      sendState();
+      return r;
+    } catch (e) { return { error: e.message }; }
+  });
+  ipcMain.handle('srgb:download', async (_e, item) => {
+    try { const r = await accountClient().download(item); reloadEffects(); sendState(); return { ok: true, ...r }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
   ipcMain.handle('conflicts:close', async () => {
     for (const name of conflicts) {
       await new Promise((r) => execFile('taskkill.exe', ['/IM', name, '/F', '/T'], { windowsHide: true }, () => r()));

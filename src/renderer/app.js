@@ -557,6 +557,7 @@
         settingRow('Frame rate', 'Effect rendering and device update rate.', fpsSel),
         settingRow('Audio reactive effects', 'Captures system audio (loopback) for effects that use engine.audio.', toggle('audio', st.audio)),
         settingRow('Screen reactive effects', 'Samples the screen for ambience effects and game meters.', toggle('screen', st.screen))),
+      srgbCard(),
       el('div', { class: 'card' }, el('h3', {}, 'Device support'),
         settingRow('Device plugin library', S.officialPlugins.installed ? `${S.officialPlugins.files} plugins, downloaded ${new Date(S.officialPlugins.date).toLocaleDateString()}` : 'Public SignalRGB-format plugins (downloaded from gitlab.com/signalrgb).', el('button', { onclick: installPlugins }, S.officialPlugins.installed ? 'Update' : 'Install')),
         settingRow('Use SignalRGB folders', 'Also load plugins & effects from an existing SignalRGB install / Documents\\WhirlwindFX.', toggle('useSignalRgbFolders', st.useSignalRgbFolders)),
@@ -578,6 +579,62 @@
         el('p', { class: 'muted small' }, `Cuttlefish ${S.version} · free & open source · `, el('a', { href: '#', onclick: () => cf.openExternal('https://github.com/Coral-coder/Cuttlefish') }, 'GitHub'))),
     );
   }
+
+  // ------------------------------------------------------------ SignalRGB import + account
+  let srgbLibCache = null;
+  async function runImport() {
+    showBanner('Looking for your SignalRGB installation…', 'info');
+    const r = await cf.srgbImport();
+    const bits = [`${r.pluginDirs} plugin folder(s)`, `${r.effectDirs} effect folder(s)`];
+    if (r.firebase) bits.push('account config');
+    showBanner(r.installRoots.length || r.dataRoots.length ? `Imported from SignalRGB: ${bits.join(', ')}.` : 'No SignalRGB installation found on this PC.', 'info', 8000);
+    sendStateSoon();
+  }
+  function sendStateSoon() { setTimeout(() => cf.state().then(applyState), 300); }
+
+  async function srgbSignIn(email, pw, statusEl) {
+    statusEl.textContent = 'Signing in…';
+    const r = await cf.srgbSignIn(email, pw);
+    if (!r.ok) { statusEl.textContent = r.error; statusEl.className = 'hint bad'; return; }
+    statusEl.textContent = `Signed in as ${r.email}`;
+    statusEl.className = 'hint ok';
+    sendStateSoon();
+  }
+
+  async function srgbSync() {
+    showBanner('Downloading your SignalRGB effects…', 'info', 0);
+    const r = await cf.srgbSync();
+    if (r.error) { showBanner(`SignalRGB sync failed: ${r.error}`, '', 8000); return; }
+    showBanner(`SignalRGB: installed ${r.installed} effect(s)${r.skipped ? `, ${r.skipped} not owned` : ''}${r.failed && r.failed.length ? `, ${r.failed.length} failed` : ''}.`, 'info', 8000);
+    sendStateSoon();
+  }
+
+  function srgbCard() {
+    const acct = (S.signalrgb && S.signalrgb.account) || {};
+    const kids = [el('h3', {}, 'SignalRGB')];
+    kids.push(settingRow('Import from SignalRGB', 'Finds your SignalRGB install and imports its plugins, effects, layout and account config. Your local files only.',
+      el('button', { class: 'primary', onclick: runImport }, S.signalrgb && S.signalrgb.imported ? 'Re-import' : 'Import')));
+    if (!acct.configured) {
+      kids.push(el('p', { class: 'muted small' }, 'Sign-in becomes available once the account config is imported from your SignalRGB install.'));
+    } else if (acct.signedIn) {
+      const st = el('p', { class: 'hint ok' }, `Signed in as ${acct.email || 'your account'}`);
+      kids.push(settingRow('SignalRGB account', `Project: ${acct.project || '—'}`, el('div', { style: 'display:flex;gap:8px' },
+        el('button', { class: 'primary', onclick: srgbSync }, 'Sync my effects'),
+        el('button', { onclick: async () => { await cf.srgbSignOut(); sendStateSoon(); } }, 'Sign out'))));
+      kids.push(st);
+      kids.push(el('p', { class: 'muted small' }, 'Sync downloads every effect your account is entitled to — free effects and anything you own or have with Pro.'));
+    } else {
+      const email = el('input', { type: 'text', placeholder: 'SignalRGB email', style: 'width:100%' });
+      const pw = el('input', { type: 'password', placeholder: 'Password', style: 'width:100%' });
+      const status = el('p', { class: 'hint' }, 'Sign in to download the effects your account owns.');
+      kids.push(el('div', { class: 'ctl' }, email, pw, el('button', { class: 'primary', onclick: () => srgbSignIn(email.value, pw.value, status) }, 'Sign in'), status));
+    }
+    return el('div', { class: 'card' }, ...kids);
+  }
+  cf.onSrgbAvailable((d) => {
+    showBanner('Found a SignalRGB installation on this PC. Import its plugins, effects and account?', 'info', 0,
+      [el('button', { class: 'primary', onclick: runImport }, 'Import from SignalRGB'), el('button', { onclick: () => go('settings') }, 'Settings')]);
+  });
 
   // ------------------------------------------------------------ diagnostics
   async function renderDiagnostics() {
@@ -640,6 +697,7 @@
     if (p.task === 'plugins' && p.state === 'downloading') showBanner(`Downloading device plugins… ${Math.round((p.progress || 0) * 100)}%`, 'info');
     if (p.task === 'plugins' && p.state === 'done') showBanner(`Installed ${p.files} device plugins. Scanning for hardware…`, 'info', 6000);
     if (p.task === 'plugins' && p.state === 'error') showBanner(`Device plugin download failed: ${p.error}. Retrying in 10 minutes.`, '', 0, [el('button', { onclick: installPlugins }, 'Retry now')]);
+    if (p.task === 'srgb-sync') showBanner(`Downloading SignalRGB effects… ${p.i}/${p.total}: ${p.name}`, 'info', 0);
     if (p.task === 'effects' && p.state === 'added') showBanner(`New effects synced: ${p.titles.slice(0, 5).join(', ')}${p.titles.length > 5 ? ` and ${p.titles.length - 5} more` : ''}`, 'info', 8000);
     if (p.task === 'pawnio') showBanner(`PawnIO: ${p.state}`, 'info', p.state === 'done' ? 6000 : 0);
   });

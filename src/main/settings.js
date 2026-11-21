@@ -28,6 +28,8 @@ const DEFAULTS = {
   autoUpdate: true,
   startMinimized: false,
   firstRun: true,
+  signalrgbConfig: {},
+  signalrgbImported: false,
 };
 
 class Settings {
