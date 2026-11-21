@@ -52,11 +52,31 @@ function transformSource(src) {
   return out + tail;
 }
 
+// A permissive stand-in for any API Cuttlefish does not implement yet. It can be
+// called, constructed, indexed and iterated without ever throwing, so a plugin
+// that uses an unknown API degrades to a no-op instead of crashing the device.
 function stubProxy() {
-  const fn = function () { return 0; };
+  const fn = function () { return stubProxy(); };
   return new Proxy(fn, {
-    get: (t, k) => (k === Symbol.toPrimitive ? () => 0 : stubProxy()),
-    apply: () => 0,
+    get: (t, k) => {
+      if (k === Symbol.toPrimitive) return () => 0;
+      if (k === Symbol.iterator) return function* () { /* empty */ };
+      if (k === 'then') return undefined; // not a thenable, so awaits resolve to the proxy
+      if (k === 'length') return 0;
+      return stubProxy();
+    },
+    apply: () => stubProxy(),
+    construct: () => stubProxy(),
+    has: () => true,
+  });
+}
+
+// Module namespace returned for an unresolved `import`: every named/default
+// export is a stub, so `import { Foo } from '@SignalRGB/x'` never yields undefined.
+function stubImport() {
+  return new Proxy({}, {
+    get: (t, k) => (k === 'default' || typeof k === 'string' ? stubProxy() : undefined),
+    has: () => true,
   });
 }
 
@@ -120,13 +140,50 @@ class PluginModule {
     return new PluginModule(file, fs.readFileSync(file, 'utf8'));
   }
 
+  // Regex fallback: pull the identity exports straight from the source so a plugin
+  // whose script throws at load time can still be matched to its device.
+  _metaFromSource() {
+    const src = this.source;
+    const grab = (name) => {
+      const m = new RegExp(`function\\s+${name}\\s*\\(\\s*\\)\\s*\\{[^}]*return\\s+([^;]+);`).exec(src);
+      return m ? m[1] : null;
+    };
+    const ids = (expr) => {
+      if (!expr) return [];
+      return (expr.match(/0x[0-9a-fA-F]+|\b\d{2,5}\b/g) || []).map((s) => (/^0x/i.test(s) ? parseInt(s, 16) : parseInt(s, 10))).filter((n) => Number.isFinite(n));
+    };
+    const strOf = (expr) => (expr ? (/["'`]([^"'`]+)["'`]/.exec(expr) || [])[1] || '' : '');
+    return {
+      name: strOf(grab('Name')) || path.basename(this.file, path.extname(this.file)),
+      publisher: strOf(grab('Publisher')),
+      type: (strOf(grab('Type')) || 'HID').toUpperCase(),
+      vendorIds: ids(grab('VendorId')),
+      productIds: ids(grab('ProductId')),
+    };
+  }
+
   _readMeta() {
     const ctx = vm.createContext({
       device: stubProxy(), bus: stubProxy(), console: { log() {} }, service: stubProxy(),
-      __cfImport: () => ({}), Math, JSON, Date,
+      keyboard: stubProxy(), mouse: stubProxy(), battery: stubProxy(), fs: stubProxy(),
+      __cfImport: () => stubImport(), Math, JSON, Date, Array, Object, String, Number,
     });
-    this.script.runInContext(ctx, { timeout: 1000 });
-    const ex = ctx.__cfExports || {};
+    let ex = {};
+    try {
+      this.script.runInContext(ctx, { timeout: 2000 });
+      ex = ctx.__cfExports || {};
+    } catch (e) {
+      // Script threw at top level (newer plugin using an API we stub). Recover the
+      // USB identity from source so the device still matches and can be driven.
+      const fb = this._metaFromSource();
+      this.loadWarning = `loaded via source fallback: ${e.message}`;
+      return {
+        file: this.file, name: fb.name, publisher: fb.publisher, type: fb.type,
+        vendorIds: fb.vendorIds, productIds: fb.productIds, size: [1, 1],
+        defaultPosition: null, defaultScale: null, deviceType: '', params: [],
+        hasValidate: /function\s+Validate\s*\(/.test(this.source), hasScan: /function\s+Scan\s*\(/.test(this.source), image: '',
+      };
+    }
     const safe = (fn, dflt) => {
       try {
         const v = call(fn);
@@ -161,7 +218,7 @@ class PluginModule {
   // Run the plugin's Validate(endpoint) against a list of HID endpoints.
   validate(endpoints) {
     if (!this.meta.hasValidate) return endpoints.slice(0, 1);
-    const ctx = vm.createContext({ device: stubProxy(), bus: stubProxy(), console: { log() {} }, __cfImport: () => ({}) });
+    const ctx = vm.createContext({ device: stubProxy(), bus: stubProxy(), console: { log() {} }, __cfImport: () => stubImport() });
     this.script.runInContext(ctx, { timeout: 1000 });
     const ex = ctx.__cfExports;
     return endpoints.filter((ep) => {
@@ -175,7 +232,7 @@ class PluginModule {
 
   // SMBus discovery: returns the list of addresses this plugin claims on `freeBus`.
   scan(freeBus) {
-    const ctx = vm.createContext({ device: stubProxy(), bus: freeBus, console: { log() {} }, __cfImport: () => ({}) });
+    const ctx = vm.createContext({ device: stubProxy(), bus: freeBus, console: { log() {} }, __cfImport: () => stubImport() });
     this.script.runInContext(ctx, { timeout: 2000 });
     try {
       return toIdList(ctx.__cfExports.Scan(freeBus));
@@ -246,6 +303,12 @@ class PluginInstance {
         return out;
       },
       flush() {},
+      // Newer plugin APIs Cuttlefish does not fully implement yet: accept them as
+      // no-ops so the device still works for its RGB lighting (LCD output is TODO).
+      setProtocol() {},
+      getProtocol: () => 0,
+      setFrame() {}, sendFrame() {}, getFrame: () => [], writeFrame() {},
+      setLcd() {}, lcdWrite() {}, setImage() {},
       bulk_transfer() { return []; },
       control_transfer() {},
       getLastReadSize: () => self.lastReadSize,
@@ -346,7 +409,7 @@ class PluginInstance {
       console: { log: (d) => self.log(d), warn: (d) => self.log(d), error: (d) => self.log(d) },
       service: stubProxy(),
       hexToRgb,
-      __cfImport: () => ({}),
+      __cfImport: () => stubImport(),
       Math, JSON, Date, Array, Object, String, Number, Boolean, Error, Map, Set,
       Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array, Float64Array, ArrayBuffer, DataView,
       parseInt, parseFloat, isNaN, isFinite, BigInt,
@@ -596,6 +659,7 @@ function loadPlugins(dirs, log) {
       const src = fs.readFileSync(f, 'utf8');
       if (!/\b(VendorId|Scan)\s*\(/.test(src)) continue;
       const m = new PluginModule(f, src);
+      if (m.loadWarning) log && log(`Plugin ${path.basename(f)} ${m.loadWarning}`);
       const sig = `${m.meta.type}|${m.meta.vendorIds.join(',')}|${m.meta.productIds.join(',')}|${m.meta.type === 'SMBUS' ? m.meta.name : ''}`;
       byIds.set(sig, m);
     } catch (e) {

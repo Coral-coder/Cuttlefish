@@ -296,7 +296,8 @@ function hidKey(g) {
 
 function scanHid() {
   const groups = hid.enumerate();
-  const hidModules = state.modules.filter((m) => m.meta.type === 'HID' || m.meta.type === 'HYBRID');
+  // Anything that isn't an SMBus or raw-USB plugin can drive a HID device.
+  const hidModules = state.modules.filter((m) => !['SMBUS', 'RAWUSB'].includes(m.meta.type));
   state.hidList = [];
   const seen = new Set();
   for (const g of groups) {
