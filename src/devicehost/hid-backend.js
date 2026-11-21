@@ -65,6 +65,8 @@ class HidIO {
     this.handles = new Map();
     this.current = endpoints[0] || null;
     this.errors = 0;
+    this.writes = 0;
+    this.lastError = null;
   }
 
   _handle(ep) {
@@ -104,22 +106,28 @@ class HidIO {
 
   write(data, len) {
     const h = this._handle();
-    if (!h) return -1;
+    if (!h) { this.errors++; this.lastError = 'no open endpoint'; return -1; }
     try {
-      return h.write(HidIO.pad(data, len));
+      const r = h.write(HidIO.pad(data, len));
+      this.writes++;
+      return r;
     } catch (e) {
       this.errors++;
+      this.lastError = e.message;
       return -1;
     }
   }
 
   sendFeature(data, len) {
     const h = this._handle();
-    if (!h) return -1;
+    if (!h) { this.errors++; this.lastError = 'no open endpoint'; return -1; }
     try {
-      return h.sendFeatureReport(HidIO.pad(data, len));
+      const r = h.sendFeatureReport(HidIO.pad(data, len));
+      this.writes++;
+      return r;
     } catch (e) {
       this.errors++;
+      this.lastError = e.message;
       return -1;
     }
   }

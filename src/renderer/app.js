@@ -583,13 +583,14 @@
   async function renderDiagnostics() {
     if (page !== 'diagnostics') return;
     const d = await cf.diagnostics();
+    const statusClass = { active: 'ok', 'no-plugin': 'muted', error: 'bad', failed: 'bad' };
     $('hidTable').replaceChildren(el('table', {},
-      el('tr', {}, el('th', {}, 'VID:PID'), el('th', {}, 'Product'), el('th', {}, 'Interfaces'), el('th', {}, 'Plugin')),
+      el('tr', {}, el('th', {}, 'VID:PID'), el('th', {}, 'Product'), el('th', {}, 'Plugin'), el('th', {}, 'Status')),
       ...d.hid.map((h) => el('tr', {},
         el('td', { class: 'mono' }, `${h.vendorId.toString(16).padStart(4, '0')}:${h.productId.toString(16).padStart(4, '0')}`),
-        el('td', {}, `${h.manufacturer || ''} ${h.product || ''}`),
-        el('td', { class: 'small muted' }, h.endpoints.map((e) => `if${e.interface} ${e.usage_page.toString(16)}:${e.usage.toString(16)}`).join(', ')),
-        el('td', { class: h.plugin ? 'ok' : 'muted' }, h.plugin || '—')))));
+        el('td', {}, el('div', {}, `${h.manufacturer || ''} ${h.product || ''}`.trim()), el('div', { class: 'small muted' }, h.endpoints.map((e) => `if${e.interface} ${e.usage_page.toString(16)}:${e.usage.toString(16)}`).join(', '))),
+        el('td', { class: h.plugin ? 'ok' : 'muted' }, h.plugin || '—'),
+        el('td', { class: `small ${statusClass[h.status] || 'muted'}` }, h.detail || h.status || '—')))));
     const sm = d.smbus;
     $('smbusInfo').replaceChildren(
       !sm ? el('p', { class: 'muted' }, S.platform === 'win32' ? 'SMBus host not running.' : 'SMBus access is Windows-only.') :

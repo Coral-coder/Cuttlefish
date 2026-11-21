@@ -217,11 +217,15 @@ function detectMotherboard() {
   });
 }
 
-// Keep the public device plugin library installed and fresh without user action.
+// Keep the public device plugin library installed, complete and fresh. An
+// interrupted download (e.g. rate limited) can leave only some plugins, so we
+// treat a small library as incomplete and re-download it.
 function refreshPluginLibrary() {
   const info = library.officialInfo(userDir());
+  const incomplete = info.installed && (info.files || 0) < 400;
   const stale = !info.installed || !info.date || Date.now() - Date.parse(info.date) > 7 * 86400000;
-  if (!stale) return;
+  if (incomplete) send('log', { t: Date.now(), role: 'library', msg: `Device plugin library incomplete (${info.files} files) — repairing` });
+  if (!stale && !incomplete) return;
   library.installOfficialPlugins(userDir(), (p) => send('library', p))
     .then(() => { pushConfig(['pluginDirs']); sendState(); })
     .catch((e) => {

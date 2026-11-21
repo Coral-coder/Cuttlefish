@@ -139,7 +139,11 @@ class PluginDevice {
   setParam(n, v) { this.inst.setParam(n, v); }
   get changed() { return this.inst.changed; }
   set changed(v) { this.inst.changed = v; }
-  describe() { return { ...this.inst.describe(), ...this.extra, stats: this.stats }; }
+  describe() {
+    const io = this.io.hid || {};
+    return { ...this.inst.describe(), ...this.extra, stats: this.stats,
+      usb: { writes: io.writes || 0, errors: io.errors || 0, lastError: io.lastError || null } };
+  }
   close() { if (this.io.hid) this.io.hid.close(); }
 }
 
@@ -292,34 +296,73 @@ function hidKey(g) {
 
 function scanHid() {
   const groups = hid.enumerate();
-  state.hidList = groups.map((g) => ({
-    vendorId: g.vendorId, productId: g.productId, product: g.product, manufacturer: g.manufacturer,
-    serial: g.serial, endpoints: g.endpoints.map(({ path: p, ...rest }) => rest),
-    plugin: (state.modules.find((m) => m.meta.type !== 'SMBUS' && m.matches(g.vendorId, g.productId)) || { meta: {} }).meta.name || null,
-  }));
+  const hidModules = state.modules.filter((m) => m.meta.type === 'HID' || m.meta.type === 'HYBRID');
+  state.hidList = [];
   const seen = new Set();
   for (const g of groups) {
     const key = hidKey(g);
     seen.add(key);
-    if (state.devices.has(key)) continue;
-    const mod = state.modules.find((m) => (m.meta.type === 'HID' || m.meta.type === 'HYBRID') && m.matches(g.vendorId, g.productId));
-    if (!mod) continue;
-    const eps = mod.validate(g.endpoints);
-    if (!eps.length) continue;
-    const io = { kind: 'hid', vendorId: g.vendorId, productId: g.productId, endpoints: eps, hid: new hid.HidIO(eps) };
-    if (!io.hid.open()) {
-      log(`Could not open ${mod.meta.name} (${key}) - is another RGB app running?`);
+    const entry = {
+      vendorId: g.vendorId, productId: g.productId, product: g.product, manufacturer: g.manufacturer,
+      serial: g.serial, endpoints: g.endpoints.map(({ path: p, ...rest }) => rest), key,
+    };
+    const matches = hidModules.filter((m) => m.matches(g.vendorId, g.productId));
+    entry.plugin = matches.length ? matches[0].meta.name : null;
+    entry.candidates = matches.map((m) => m.meta.name);
+
+    if (state.devices.has(key)) {
+      const d = state.devices.get(key);
+      const warn = d.inst && d.inst.initWarning;
+      const io = d.io && d.io.hid;
+      entry.status = d.inst && d.inst.failed ? 'failed' : warn ? 'warn' : 'active';
+      entry.detail = d.inst && d.inst.failed ? d.inst.failed
+        : io ? `${warn ? warn + '; ' : ''}${io.writes || 0} USB writes${io.errors ? `, ${io.errors} errors (${io.lastError || ''})` : ''}`
+        : (warn || 'running');
+      state.hidList.push(entry);
       continue;
     }
-    try {
-      const inst = new PluginInstance(mod, io, hostApi, key);
-      inst.initialize();
-      addDevice(new PluginDevice(inst, io, { product: g.product, manufacturer: g.manufacturer }));
-      log(`Started ${inst.name} using ${path.basename(mod.file)}`);
-    } catch (e) {
-      log(`Plugin ${mod.meta.name} crashed during start: ${e.message}`);
-      io.hid.close();
+    if (!matches.length) {
+      // No match: say whether the library is even loaded, so "—" is never ambiguous.
+      entry.status = 'no-plugin';
+      entry.detail = hidModules.length < 300
+        ? `device plugin library incomplete (${hidModules.length} loaded) — still downloading or blocked`
+        : 'no plugin supports this USB ID yet';
+      state.hidList.push(entry);
+      continue;
     }
+    let started = false;
+    const reasons = [];
+    for (const mod of matches) {
+      const eps = mod.validate(g.endpoints);
+      if (!eps.length) {
+        reasons.push(`${mod.meta.name}: no interface matched Validate()`);
+        continue;
+      }
+      const io = { kind: 'hid', vendorId: g.vendorId, productId: g.productId, endpoints: eps, hid: new hid.HidIO(eps) };
+      if (!io.hid.open()) {
+        reasons.push(`${mod.meta.name}: could not open (another RGB app may hold it: close iCUE / Armoury Crate / NZXT CAM / SignalRGB / Glorious Core)`);
+        continue;
+      }
+      try {
+        const inst = new PluginInstance(mod, io, hostApi, key);
+        inst.initialize();
+        addDevice(new PluginDevice(inst, io, { product: g.product, manufacturer: g.manufacturer }));
+        log(`Started ${inst.name} using ${path.basename(mod.file)} on endpoint if${eps[0].interface} (${eps[0].usage_page.toString(16)}:${eps[0].usage.toString(16)})`);
+        entry.status = inst.failed ? 'failed' : 'active';
+        entry.detail = inst.failed || `started on if${eps[0].interface}`;
+        started = true;
+        break;
+      } catch (e) {
+        reasons.push(`${mod.meta.name}: ${e.message}`);
+        io.hid.close();
+      }
+    }
+    if (!started) {
+      entry.status = 'error';
+      entry.detail = reasons.join(' · ') || 'could not start';
+      log(`Device ${g.manufacturer || ''} ${g.product || ''} [${key}] not started: ${entry.detail}`);
+    }
+    state.hidList.push(entry);
   }
   for (const key of [...state.devices.keys()]) {
     if (key.startsWith('hid:') && !seen.has(key)) {

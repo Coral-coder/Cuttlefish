@@ -487,17 +487,39 @@ class PluginInstance {
   }
 
   initialize() {
+    // Initialization talks to the real device (firmware handshake, LED detection).
+    // If it is slow or the device answers oddly, do NOT kill the device: render anyway
+    // (Render usually still lights LEDs) and retry Initialize in the background. A
+    // permanent failure only happens if the plugin throws a real error, not a timeout.
+    this.initAttempts = (this.initAttempts || 0) + 1;
     try {
-      this._guard(this.exports.Initialize, [], this.host.initTimeout || 15000);
+      this._guard(this.exports.Initialize, [], this.host.initTimeout || 20000);
       this.initialized = true;
+      this.initWarning = null;
+      return true;
     } catch (e) {
-      this.failed = `Initialize failed: ${e.message}`;
-      this.log(this.failed);
+      this.initialized = true; // let Render run; many plugins still drive LEDs
+      if (/timed out/.test(e.message)) {
+        this.initWarning = `Initialize is slow to finish (attempt ${this.initAttempts}); lighting anyway`;
+        this.log(this.initWarning);
+        this._retryInit = this.initAttempts < 5;
+      } else {
+        this.initWarning = `Initialize error: ${e.message}`;
+        this.log(this.initWarning);
+        this._retryInit = this.initAttempts < 3;
+      }
+      return false;
     }
   }
 
   render() {
-    if (!this.initialized || this.failed) return;
+    if (this.failed) return;
+    if (!this.initialized) return;
+    // Retry a slow/odd initialization occasionally, without blocking rendering.
+    if (this._retryInit && (this._frames || 0) % 300 === 150) {
+      this._retryInit = false;
+      this.initialize();
+    }
     if (this._pendingCallbacks && this._pendingCallbacks.size) {
       for (const name of this._pendingCallbacks) {
         try { this._guard(this.ctx[`on${name}Changed`]); } catch (e) { this.log(`on${name}Changed: ${e.message}`); }
@@ -507,11 +529,14 @@ class PluginInstance {
     try {
       this._guard(this.exports.Render);
       this.errorCount = 0;
+      this._everRendered = true;
     } catch (e) {
       this.errorCount = (this.errorCount || 0) + 1;
       if (this.errorCount < 5 || this.errorCount % 100 === 0) this.log(`Render error: ${e.message}`);
-      if (this.errorCount > 600) this.failed = `Render failing: ${e.message}`;
+      // Only give up if it has never once succeeded and keeps throwing hard.
+      if (this.errorCount > 1200 && !this._everRendered) this.failed = `Render failing: ${e.message}`;
     }
+    this._frames = (this._frames || 0) + 1;
   }
 
   shutdown(suspending) {
@@ -535,6 +560,7 @@ class PluginInstance {
       battery: this.battery,
       channels: [...this.channels.values()].map((c) => ({ id: c.id, limit: c.limit, count: this._channelCount(c.id) })),
       failed: this.failed,
+      warning: this.initWarning || null,
       image: this.imageUrl,
       items: this.items(),
       logs: this.logs.slice(-30),
