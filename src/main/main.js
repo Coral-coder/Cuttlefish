@@ -334,6 +334,8 @@ function stateSnapshot() {
     platform: process.platform,
     canvas: { width: CANVAS_W, height: CANVAS_H },
     effects: effects.map(({ id, title, description, publisher, source, usesAudio, usesScreen }) => ({ id, title, description, publisher, source, usesAudio, usesScreen })),
+    effectSources: effects.reduce((a, e) => { a[e.source] = (a[e.source] || 0) + 1; return a; }, {}),
+    effectDirs: effectDirs().map((d) => d.dir),
     effect: eff ? { id: eff.id, title: eff.title, description: eff.description, properties: eff.properties, values: runner.values, usesAudio: eff.usesAudio, usesScreen: eff.usesScreen } : null,
     devices: devices ? devices.devices() : [],
     settings: {
@@ -623,13 +625,25 @@ function registerIpc() {
     if (typeof s.brightness === 'number') { settings.set('brightness', Math.max(0, Math.min(1, s.brightness))); pushConfig(['brightness']); }
     settings.set('signalrgbImported', true);
     pushConfig(['pluginDirs']);
+    const before = effects.length;
     reloadEffects();
     watchEffectFolders();
     devices.rescan();
     sendState();
+    // Count effect .html actually present in the discovered SignalRGB folders.
+    let effectFiles = 0;
+    for (const dir of d.effectDirs) {
+      effectFiles += srgbImport.walkFind(dir, (name) => /\.html?$/i.test(name), { maxDepth: 8, maxHits: 5000 }).length;
+    }
+    let pluginFiles = 0;
+    for (const dir of d.pluginDirs) {
+      pluginFiles += srgbImport.walkFind(dir, (name) => /\.js$/i.test(name) && !/\.(test|spec)\.js$/i.test(name), { maxDepth: 6, maxHits: 5000 }).length;
+    }
     return {
       installRoots: d.installRoots, dataRoots: d.dataRoots,
-      pluginDirs: d.pluginDirs.length, effectDirs: d.effectDirs.length,
+      pluginDirs: d.pluginDirs, effectDirs: d.effectDirs,
+      pluginFiles, effectFiles,
+      effectsAdded: effects.length - before, effectsTotal: effects.length,
       settings: d.settingsFiles.length, firebase: !!(d.firebase && d.firebase.haveApiKey),
       firebaseSource: d.firebase && d.firebase.source,
     };

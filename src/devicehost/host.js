@@ -322,14 +322,30 @@ function scanHid() {
       state.hidList.push(entry);
       continue;
     }
+    let tentative = false;
     if (!matches.length) {
-      // No match: say whether the library is even loaded, so "—" is never ambiguous.
-      entry.status = 'no-plugin';
-      entry.detail = hidModules.length < 300
-        ? `device plugin library incomplete (${hidModules.length} loaded) — still downloading or blocked`
-        : 'no plugin supports this USB ID yet';
-      state.hidList.push(entry);
-      continue;
+      // No exact VID+PID match. Some keyboard plugins list one representative PID and
+      // accept sibling models via Validate(). Try same-vendor HID plugins whose
+      // Validate() claims one of this device's interfaces, as a tentative match.
+      const sameVendor = hidModules.filter((m) => m.meta.vendorIds.includes(g.vendorId) && m.meta.hasValidate);
+      const byValidate = sameVendor.filter((m) => m.validate(g.endpoints).length);
+      if (byValidate.length) {
+        matches.push(...byValidate.slice(0, 2));
+        entry.candidates = matches.map((m) => m.meta.name);
+        tentative = true;
+      } else {
+        entry.status = 'no-plugin';
+        if (hidModules.length < 300) {
+          entry.detail = `device plugin library incomplete (${hidModules.length} loaded) — still downloading or blocked`;
+        } else {
+          const sv = state.modules.filter((m) => m.meta.vendorIds.includes(g.vendorId));
+          entry.detail = sv.length
+            ? `no plugin lists PID 0x${g.productId.toString(16)}. Same-vendor: ${sv.slice(0, 3).map((m) => `${m.meta.name} pids=${m.meta.productIds.map((p) => '0x' + p.toString(16)).join(',') || 'any'}`).join(' · ')}`
+            : 'no plugin supports this USB ID yet';
+        }
+        state.hidList.push(entry);
+        continue;
+      }
     }
     let started = false;
     const reasons = [];
@@ -350,7 +366,7 @@ function scanHid() {
         addDevice(new PluginDevice(inst, io, { product: g.product, manufacturer: g.manufacturer }));
         log(`Started ${inst.name} using ${path.basename(mod.file)} on endpoint if${eps[0].interface} (${eps[0].usage_page.toString(16)}:${eps[0].usage.toString(16)})`);
         entry.status = inst.failed ? 'failed' : 'active';
-        entry.detail = inst.failed || `started on if${eps[0].interface}`;
+        entry.detail = (inst.failed || `started on if${eps[0].interface}`) + (tentative ? ' (matched by interface, not exact USB ID)' : '');
         started = true;
         break;
       } catch (e) {

@@ -585,11 +585,17 @@
   async function runImport() {
     showBanner('Looking for your SignalRGB installation…', 'info');
     const r = await cf.srgbImport();
-    const bits = [`${r.pluginDirs} plugin folder(s)`, `${r.effectDirs} effect folder(s)`];
-    if (r.firebase) bits.push('account config');
-    showBanner(r.installRoots.length || r.dataRoots.length ? `Imported from SignalRGB: ${bits.join(', ')}.` : 'No SignalRGB installation found on this PC.', 'info', 8000);
+    if (!r.installRoots.length && !r.dataRoots.length) {
+      showBanner('No SignalRGB installation found on this PC. Tell me where SignalRGB is installed and I will add it.', '', 0);
+      return;
+    }
+    const bits = [`${r.effectFiles} effect files found → ${r.effectsAdded} added (${r.effectsTotal} total)`, `${r.pluginFiles} plugin files`];
+    if (r.firebase) bits.push('account config ✓');
+    showBanner(`Imported from SignalRGB: ${bits.join(' · ')}.`, 'info', 0, [el('button', { onclick: () => { go('diagnostics'); } }, 'Details')]);
+    lastImport = r;
     sendStateSoon();
   }
+  let lastImport = null;
   function sendStateSoon() { setTimeout(() => cf.state().then(applyState), 300); }
 
   async function srgbSignIn(email, pw, statusEl) {
@@ -654,7 +660,15 @@
         el('div', {}, sm.error ? el('p', { class: 'bad' }, sm.error) : null,
           ...sm.buses.map((b) => el('p', {}, el('b', {}, b.name), ` vendor 0x${(b.info.vendor || 0).toString(16)} · ${b.stats.tx} transactions · ${b.stats.errors} errors · avg ${(b.stats.us / Math.max(1, b.stats.tx)).toFixed(0)} µs`))),
       el('p', { class: 'muted small' }, `OpenRGB: ${d.openrgb && d.openrgb.connected ? 'connected' : d.openrgb && d.openrgb.error ? d.openrgb.error : 'off'}`),
-      el('p', { class: 'muted small' }, `Motherboard: ${d.state.motherboard || 'unknown'} · ${d.state.os}`));
+      el('p', { class: 'muted small' }, `Motherboard: ${d.state.motherboard || 'unknown'} · ${d.state.os}`),
+      el('h3', { style: 'margin-top:14px' }, 'Effects'),
+      el('p', { class: 'small' }, Object.entries(S.effectSources || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || 'none'),
+      lastImport ? el('div', { class: 'small muted' },
+        el('p', {}, `Last import: ${lastImport.effectFiles} effect files in ${lastImport.effectDirs.length} folder(s), ${lastImport.pluginFiles} plugin files.`),
+        ...(lastImport.effectDirs || []).map((x) => el('div', {}, el('code', {}, x))),
+        lastImport.firebaseSource ? el('p', {}, `Account config from: `, el('code', {}, lastImport.firebaseSource)) : el('p', {}, 'No account config found in the install.')) : null,
+      el('p', { class: 'small muted' }, 'Effect folders scanned:'),
+      ...((S.effectDirs || []).map((x) => el('div', { class: 'small' }, el('code', {}, x)))));
     logs.splice(0, logs.length, ...d.logs);
     renderLogs();
   }
