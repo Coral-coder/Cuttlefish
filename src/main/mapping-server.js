@@ -178,7 +178,7 @@ class MappingServer extends EventEmitter {
 
   emitResult(m) {
     const res = { report: null };
-    this.emit('result', { camera: m.camera, points: m.points || [] }, res);
+    this.emit('result', { camera: m.camera, points: m.points || [], photo: m.photo || null }, res);
     return res.report;
   }
 

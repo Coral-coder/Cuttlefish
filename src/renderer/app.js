@@ -9,6 +9,23 @@
 
   let S = null; // state snapshot
   let devices = [];
+  let photoImg = null;
+  let photoRect = null;
+  let photoTs = 0;
+  function syncLayoutPhoto() {
+    const lp = S && S.settings && S.settings.layoutPhoto;
+    if (!lp) { photoImg = null; photoRect = null; photoTs = 0; return; }
+    photoRect = lp.rect;
+    if (lp.ts !== photoTs) {
+      photoTs = lp.ts;
+      cf.getLayoutPhoto().then((p) => {
+        if (!p || !p.dataUrl) return;
+        const im = new Image();
+        im.onload = () => { photoImg = im; if (page === 'layout') drawLayout(); };
+        im.src = p.dataUrl;
+      });
+    }
+  }
   let frameRGBA = new Uint8ClampedArray(W * H * 4);
   let srcFilter = 'all';
   let page = 'lighting';
@@ -214,9 +231,17 @@
 
   function drawLayout() {
     if (page !== 'layout') return;
-    tctx.putImageData(new ImageData(frameRGBA.slice(), W, H), 0, 0);
+    lx.clearRect(0, 0, lc.width, lc.height);
     lx.imageSmoothingEnabled = true;
-    lx.globalAlpha = 0.55;
+    // Reference photo of the real case behind everything, if we have one.
+    if (photoImg && photoRect) {
+      lx.globalAlpha = 1;
+      lx.drawImage(photoImg, photoRect.x * LK, photoRect.y * LK, photoRect.w * LK, photoRect.h * LK);
+      lx.fillStyle = 'rgba(11,15,20,0.35)';
+      lx.fillRect(0, 0, lc.width, lc.height);
+    }
+    tctx.putImageData(new ImageData(frameRGBA.slice(), W, H), 0, 0);
+    lx.globalAlpha = photoImg ? 0.3 : 0.55;
     lx.drawImage(tmp, 0, 0, lc.width, lc.height);
     lx.globalAlpha = 1;
     // grid
@@ -385,7 +410,9 @@
       el('div', { class: 'row', style: 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap' },
         el('button', { onclick: () => cf.identify(it.key) }, 'Identify'),
         p.leds ? el('button', { onclick: () => { const np = { ...p, leds: null }; commitPlacement(it, np); drawLayout(); }, title: 'Remove the per-LED positions found by the camera' }, 'Clear camera LEDs') : null,
-        el('button', { class: 'ghost', onclick: () => { delete localPlacements[it.key]; delete S.settings.placements[it.key]; cf.setPlacement(it.key, null); renderLayoutEdit(); drawLayout(); } }, 'Reset')),
+        el('button', { class: 'ghost', onclick: () => { delete localPlacements[it.key]; delete S.settings.placements[it.key]; cf.setPlacement(it.key, null); renderLayoutEdit(); drawLayout(); } }, 'Reset'),
+        photoImg ? el('button', { class: 'ghost', onclick: () => { cf.clearLayoutPhoto(); photoImg = null; photoRect = null; drawLayout(); } }, 'Remove case photo') : null,
+      ),
       p.leds ? el('p', { class: 'muted small' }, `${Object.keys(p.leds).length} LEDs positioned by camera (purple ring).`) : null,
     );
   }
@@ -732,6 +759,7 @@
     $('power').checked = !s.settings.paused;
     $('devCount').textContent = devices.length;
     localPlacements = {};
+    syncLayoutPhoto();
     renderEffects();
     renderEffect();
     renderDevices();

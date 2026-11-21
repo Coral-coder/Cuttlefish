@@ -196,6 +196,29 @@
     return out;
   }
 
+  // Grab a colour photo of the case at the camera's native aspect, downscaled to a
+  // reasonable width, as a JPEG data URL. LEDs are lit (full pattern) and exposure
+  // is briefly unlocked so the case is visible, not a dark frame.
+  async function capturePhoto() {
+    try {
+      send({ type: 'preview', on: true, level: Math.min(100, Number($('level').value) + 25) });
+      await lockExposure(false);
+      await new Promise((r) => setTimeout(r, 900));
+      const vw = video.videoWidth || 1280;
+      const vh = video.videoHeight || 720;
+      const pw = Math.min(1024, vw);
+      const ph = Math.round((pw * vh) / vw);
+      const c = document.createElement('canvas');
+      c.width = pw;
+      c.height = ph;
+      c.getContext('2d').drawImage(video, 0, 0, pw, ph);
+      send({ type: 'preview', on: false });
+      return { dataUrl: c.toDataURL('image/jpeg', 0.72), width: pw, height: ph };
+    } catch {
+      return null;
+    }
+  }
+
   function drawPoints(points) {
     octx.clearRect(0, 0, overlay.width, overlay.height);
     const k = overlay.width / W;
@@ -239,7 +262,10 @@
         progress(1, 1, 'Decoding…');
         const points = decode(m.total, m.bits);
         drawPoints(points.flatMap((p) => p.cands.map((c, k) => ({ id: p.id, x: c.x, y: c.y, alt: k > 0 }))));
-        send({ type: 'result', camera: { width: W, height: H }, points });
+        // Capture a clean colour photo of the case (LEDs lit, auto exposure) to use
+        // as the layout backdrop so the result looks like the real machine.
+        const photo = await capturePhoto();
+        send({ type: 'result', camera: { width: W, height: H }, points, photo });
         await lockExposure(false);
         break;
       }

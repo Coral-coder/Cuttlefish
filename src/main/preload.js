@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('cf', {
   rescan: () => invoke('devices:rescan'),
   setPlacement: (k, p) => invoke('layout:set', k, p),
   replacePlacements: (p) => invoke('layout:replace', p),
+  getLayoutPhoto: () => invoke('layout:photo'),
+  clearLayoutPhoto: () => invoke('layout:clearphoto'),
   setSetting: (k, v) => invoke('settings:set', k, v),
   startMapping: () => invoke('mapping:start'),
   installPlugins: () => invoke('library:install-plugins'),

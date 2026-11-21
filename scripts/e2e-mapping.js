@@ -129,6 +129,9 @@ function scene() {
 
   await win.waitForTimeout(800);
   const st = await win.evaluate(() => window.cf.state());
+  const lp = st.settings.layoutPhoto;
+  const photo = await win.evaluate(() => window.cf.getLayoutPhoto());
+  console.log('layoutPhoto rect:', lp ? JSON.stringify(lp.rect) : 'NONE', '| image bytes:', photo && photo.dataUrl ? photo.dataUrl.length : 0);
   const items = st.devices.flatMap((d) => d.items);
   const pl = st.settings.placements;
   // Compare pairwise distances: canvas vs camera (should differ by one scale factor).

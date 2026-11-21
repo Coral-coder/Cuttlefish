@@ -209,7 +209,9 @@ function solve({ items, offsets, points, existing, seed }) {
     placements[item.key] = placement;
     report.push({ key: item.key, detected: r.inliers.length, rejected: r.rejected || 0, total, error: Math.round(err * 100) / 100 });
   }
-  return { placements, report, scale: k };
+  // Transform mapping a camera-space point to the canvas: canvas = cam*k + (ox,oy).
+  // Used to place a reference photo of the case behind the layout.
+  return { placements, report, scale: k, camera: { k, ox, oy } };
 }
 
 module.exports = { solve, fitSimilarity, ransacItem };

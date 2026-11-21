@@ -308,12 +308,29 @@ function startMapper() {
     const l = layout || devices.layoutForMapping();
     devices.setMapping(true, pattern, l.offsets);
   });
-  mapper.on('result', ({ points }, out) => {
+  mapper.on('result', ({ points, photo, camera }, out) => {
     const l = layout || devices.layoutForMapping();
     const res = solve({ items: l.items, offsets: l.offsets, points, existing: settings.get('placements') });
     const placements = { ...settings.get('placements'), ...res.placements };
     settings.set('placements', placements);
     pushConfig(['placements']);
+    // Save the reference photo and the canvas rectangle it maps to, so the layout
+    // and preview can show the real case behind the LEDs.
+    if (photo && photo.dataUrl && res.camera && camera) {
+      try {
+        const b64 = photo.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+        const file = path.join(userDir(), 'layout-photo.jpg');
+        fs.writeFileSync(file, Buffer.from(b64, 'base64'));
+        const { k, ox, oy } = res.camera;
+        settings.set('layoutPhoto', {
+          file,
+          rect: { x: ox, y: oy, w: camera.width * k, h: camera.height * k },
+          ts: Date.now(),
+        });
+      } catch (e) {
+        send('log', { t: Date.now(), role: 'mapping', msg: `Could not save layout photo: ${e.message}` });
+      }
+    }
     const names = Object.fromEntries(l.items.map((i) => [i.key, i.name]));
     out.report = { items: res.report.map((r) => ({ ...r, name: names[r.key] || r.key })), error: res.error };
     send('mapping', { result: out.report });
@@ -360,6 +377,7 @@ function stateSnapshot() {
       effectDirs: settings.get('effectDirs'),
       pluginDirs: settings.get('pluginDirs'),
       mapping: settings.get('mapping'),
+      layoutPhoto: (() => { const p = settings.get('layoutPhoto'); return p ? { rect: p.rect, ts: p.ts } : null; })(),
     },
     pluginDirs: pluginDirs(),
     officialPlugins: library.officialInfo(userDir()),
@@ -553,6 +571,13 @@ function registerIpc() {
     settings.set('placements', all);
     pushConfig(['placements']);
   });
+  ipcMain.handle('layout:photo', () => {
+    const p = settings.get('layoutPhoto');
+    if (!p || !p.file) return null;
+    try { return { rect: p.rect, ts: p.ts, dataUrl: `data:image/jpeg;base64,${fs.readFileSync(p.file).toString('base64')}` }; }
+    catch { return null; }
+  });
+  ipcMain.handle('layout:clearphoto', () => { settings.set('layoutPhoto', null); sendState(); });
   ipcMain.handle('layout:replace', (_e, placements) => {
     settings.set('placements', placements || {});
     pushConfig(['placements']);
